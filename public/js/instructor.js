@@ -391,6 +391,75 @@ function renderRoles() {
   }
 }
 
+let editingSceneId = null;
+
+function editScene(sceneId) {
+  const scenes = sessionData.scenes;
+  const scene = scenes.find(s => s.id === sceneId);
+  if (!scene) return;
+  editingSceneId = sceneId;
+  document.getElementById('editSceneTitle').value = scene.title || '';
+  document.getElementById('editSceneContent').value = scene.content || '';
+  // 渲染角色专属内容编辑区
+  const groups = sessionData.groups;
+  let roleHtml = '';
+  if (groups) {
+    groups.forEach(g => {
+      (g.roles || []).forEach(r => {
+        const roleText = (scene.role_content && scene.role_content[r.id]) || '';
+        roleHtml += `
+          <div style="margin-bottom:10px;padding:10px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid var(--border)">
+            <label style="font-size:12px;font-weight:600;color:var(--accent);display:block;margin-bottom:4px">🎭 ${escapeHtml(g.name)} · ${escapeHtml(r.name)} 专属剧本</label>
+            <textarea class="input" id="editRoleContent_${r.id}" rows="3" placeholder="该角色在这一幕的专属内容..." style="font-size:13px">${escapeHtml(roleText)}</textarea>
+          </div>`;
+      });
+    });
+  }
+  document.getElementById('editRoleContentList').innerHTML = roleHtml || '<div style="color:var(--text-muted);font-size:13px;padding:8px">暂无角色数据</div>';
+  // 显示弹窗
+  document.getElementById('editSceneModal').style.display = 'flex';
+}
+
+function closeEditScene() {
+  document.getElementById('editSceneModal').style.display = 'none';
+  editingSceneId = null;
+}
+
+async function saveEditScene() {
+  if (!editingSceneId) return;
+  const title = document.getElementById('editSceneTitle').value.trim();
+  const content = document.getElementById('editSceneContent').value.trim();
+  if (!title) { toast('请输入幕次标题', 'error'); return; }
+  if (!content) { toast('请输入剧本内容', 'error'); return; }
+  // 收集角色专属内容
+  const roleContent = {};
+  const groups = sessionData.groups;
+  if (groups) {
+    groups.forEach(g => {
+      (g.roles || []).forEach(r => {
+        const textarea = document.getElementById(`editRoleContent_${r.id}`);
+        if (textarea && textarea.value.trim()) {
+          roleContent[r.id] = textarea.value.trim();
+        }
+      });
+    });
+  }
+  try {
+    const res = await fetch(`/api/session/${sessionCode}/scene/${editingSceneId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, content, roleContent })
+    });
+    const data = await res.json();
+    if (data.success) {
+      toast('剧本已更新', 'success');
+      closeEditScene();
+    }
+  } catch (err) {
+    toast('保存失败', 'error');
+  }
+}
+
 function renderScenes() {
   const container = document.getElementById('sceneList');
   const empty = document.getElementById('sceneEmpty');
@@ -413,10 +482,14 @@ function renderScenes() {
           <div class="scene-number">第 ${s.scene_number} 幕</div>
           <div class="scene-title">${escapeHtml(s.title)}</div>
         </div>
-        <button class="btn btn-ghost btn-sm" onclick="deleteScene(${s.id})" style="color:var(--text-muted);flex-shrink:0">✕</button>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <button class="btn btn-ghost btn-sm" onclick="editScene(${s.id})" style="color:var(--blue)">✏️</button>
+          <button class="btn btn-ghost btn-sm" onclick="deleteScene(${s.id})" style="color:var(--text-muted)">✕</button>
+        </div>
       </div>
       <div class="scene-content" style="font-size:14px;max-height:120px;overflow:hidden">${escapeHtml(s.content)}</div>
-      <button class="btn btn-ghost btn-sm" style="margin-top:8px;color:var(--text-muted);font-size:12px" onclick="this.previousElementSibling.style.maxHeight='none'">展开全部</button>
+      ${s.role_content && Object.keys(s.role_content).length > 0 ? `<div style="font-size:11px;color:var(--gold);margin-top:6px">🎭 含 ${Object.keys(s.role_content).length} 个角色专属内容</div>` : ''}
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px;color:var(--text-muted);font-size:12px" onclick="this.previousElementSibling.previousElementSibling.style.maxHeight='none'">展开全部</button>
     </div>
   `).join('');
 }

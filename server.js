@@ -248,6 +248,25 @@ app.post('/api/session/:code/scene', (req, res) => {
   res.json({ success: true, scenes });
 });
 
+// 更新剧本幕次（支持编辑标题、内容、角色专属内容）
+app.put('/api/session/:code/scene/:sceneId', (req, res) => {
+  const session = stmts.getSessionByCode.get(req.params.code);
+  if (!session) return res.status(404).json({ success: false, message: '场次不存在' });
+  const { title, content } = req.body;
+  db.prepare('UPDATE scenes SET title = ?, content = ? WHERE id = ? AND session_id = ?').run(title, content, req.params.sceneId, session.id);
+  // 更新角色专属内容
+  if (req.body.roleContent && typeof req.body.roleContent === 'object') {
+    for (const [roleId, text] of Object.entries(req.body.roleContent)) {
+      if (text && text.trim()) {
+        stmts.addSceneRoleContent.run(parseInt(req.params.sceneId), parseInt(roleId), text);
+      }
+    }
+  }
+  const scenes = stmts.getScenes.all(session.id).map(s => enrichSceneWithRoleContent(s, session.id));
+  io.to(`session:${req.params.code}`).emit('session_updated', { scenes });
+  res.json({ success: true, scenes });
+});
+
 // 删除剧本幕次
 app.delete('/api/session/:code/scene/:sceneId', (req, res) => {
   stmts.deleteScene.run(req.params.sceneId, req.params.code);

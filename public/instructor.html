@@ -121,6 +121,26 @@
             <div class="icon">📜</div>
             <div class="text">还没有剧本内容</div>
           </div>
+
+          <!-- 编辑剧本弹窗 -->
+          <div id="editSceneModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:999;display:none;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)closeEditScene()">
+            <div style="background:#1a1a2e;border:1px solid var(--border);border-radius:var(--radius);max-width:500px;width:100%;max-height:90vh;overflow-y:auto;padding:24px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                <div style="font-size:16px;font-weight:700">编辑剧本</div>
+                <button class="btn btn-ghost btn-icon" onclick="closeEditScene()">✕</button>
+              </div>
+              <div class="input-group">
+                <label class="input-label">幕次标题</label>
+                <input class="input" id="editSceneTitle" placeholder="幕次标题">
+              </div>
+              <div class="input-group">
+                <label class="input-label">公共剧本内容</label>
+                <textarea class="input" id="editSceneContent" rows="6"></textarea>
+              </div>
+              <div id="editRoleContentList" style="margin-bottom:16px"></div>
+              <button class="btn btn-primary btn-block" onclick="saveEditScene()">保存修改</button>
+            </div>
+          </div>
         </div>
       </div>
 
