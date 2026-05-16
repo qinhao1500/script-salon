@@ -50,6 +50,15 @@ db.exec(`
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS scene_role_content (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scene_id INTEGER NOT NULL,
+    role_id INTEGER NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE,
+    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS participants (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER NOT NULL,
@@ -76,6 +85,8 @@ const stmts = {
   addScene: db.prepare('INSERT INTO scenes (session_id, scene_number, title, content) VALUES (?, ?, ?, ?)'),
   getScenes: db.prepare('SELECT * FROM scenes WHERE session_id = ? ORDER BY scene_number'),
   deleteScene: db.prepare('DELETE FROM scenes WHERE id = ? AND session_id = ?'),
+  addSceneRoleContent: db.prepare('INSERT OR REPLACE INTO scene_role_content (scene_id, role_id, content) VALUES (?, ?, ?)'),
+  getSceneRoleContent: db.prepare('SELECT * FROM scene_role_content WHERE scene_id = ?'),
   setCurrentScene: db.prepare('UPDATE sessions SET current_scene = ? WHERE code = ?'),
   addParticipant: db.prepare('INSERT OR REPLACE INTO participants (session_id, group_id, role_id, name) VALUES (?, ?, ?, ?)'),
   removeParticipant: db.prepare('DELETE FROM participants WHERE role_id = ? AND session_id = ?'),
@@ -118,6 +129,16 @@ app.get('/api/session/:code', (req, res) => {
   res.json({ success: true, session });
 });
 
+// 辅助：给场景附加角色专属内容
+function enrichSceneWithRoleContent(scene, sessionId) {
+  const roleContents = stmts.getSceneRoleContent.all(scene.id);
+  const roleContentMap = {};
+  roleContents.forEach(rc => {
+    roleContentMap[rc.role_id] = rc.content;
+  });
+  return { ...scene, role_content: roleContentMap };
+}
+
 // 获取场次完整数据（讲师端用）
 app.get('/api/session/:code/full', (req, res) => {
   const session = stmts.getSessionByCode.get(req.params.code);
@@ -127,12 +148,12 @@ app.get('/api/session/:code/full', (req, res) => {
     ...g,
     roles: stmts.getRolesByGroup.all(g.id, session.id)
   }));
-  const scenes = stmts.getScenes.all(session.id);
+  const scenes = stmts.getScenes.all(session.id).map(s => enrichSceneWithRoleContent(s, session.id));
   const participants = stmts.getParticipants.all(session.id);
   res.json({ success: true, session, groups: groupsWithRoles, scenes, participants });
 });
 
-// 获取场次公开信息（学员端用，不包括敏感数据）
+// 获取场次公开信息（学员端用）
 app.get('/api/session/:code/public', (req, res) => {
   const session = stmts.getSessionByCode.get(req.params.code);
   if (!session) return res.status(404).json({ success: false, message: '场次不存在' });
@@ -147,7 +168,7 @@ app.get('/api/session/:code/public', (req, res) => {
       }))
     };
   });
-  const scenes = stmts.getScenes.all(session.id);
+  const scenes = stmts.getScenes.all(session.id).map(s => enrichSceneWithRoleContent(s, session.id));
   const currentScene = session.current_scene;
   const pushedScenes = scenes.filter(s => s.scene_number <= currentScene);
   res.json({ success: true, session: { ...session, pushedScenes }, groups: groupsWithRoles });
@@ -203,14 +224,26 @@ app.delete('/api/session/:code/role/:roleId', (req, res) => {
   res.json({ success: true });
 });
 
-// 添加剧本幕次
+// 添加剧本幕次（支持角色专属内容）
 app.post('/api/session/:code/scene', (req, res) => {
   const session = stmts.getSessionByCode.get(req.params.code);
   if (!session) return res.status(404).json({ success: false, message: '场次不存在' });
-  const { title, content } = req.body;
+  const { title, content, roleContent } = req.body;
   const maxScene = stmts.getMaxSceneNumber.get(session.id).max;
-  stmts.addScene.run(session.id, maxScene + 1, title, content);
-  const scenes = stmts.getScenes.all(session.id);
+  const result = stmts.addScene.run(session.id, maxScene + 1, title, content);
+  const sceneId = result.lastInsertRowid;
+  // 保存角色专属内容
+  if (roleContent && typeof roleContent === 'object') {
+    const insertMany = db.transaction((entries) => {
+      for (const [roleId, text] of Object.entries(entries)) {
+        if (text && text.trim()) {
+          stmts.addSceneRoleContent.run(sceneId, parseInt(roleId), text);
+        }
+      }
+    });
+    insertMany(Object.entries(roleContent));
+  }
+  const scenes = stmts.getScenes.all(session.id).map(s => enrichSceneWithRoleContent(s, session.id));
   io.to(`session:${req.params.code}`).emit('session_updated', { scenes });
   res.json({ success: true, scenes });
 });
@@ -222,6 +255,69 @@ app.delete('/api/session/:code/scene/:sceneId', (req, res) => {
   const scenes = stmts.getScenes.all(session.id);
   io.to(`session:${req.params.code}`).emit('session_updated', { scenes });
   res.json({ success: true, scenes });
+});
+
+// ==================== 预设沙龙 API ====================
+
+// 一键创建喙语621号店预设沙龙
+app.post('/api/preset/salon-621', (req, res) => {
+  const code = generateCode();
+  const title = '喙语621号店 · 沉浸式沟通沙龙';
+  
+  // 创建场次
+  stmts.createSession.run(code, title);
+  const session = stmts.getSessionByCode.get(code);
+  const sessionId = session.id;
+
+  // 创建小组
+  stmts.addGroup.run(sessionId, '621号店 · 第一组', 1);
+  const group = stmts.getGroups.all(sessionId)[0];
+  const groupId = group.id;
+
+  // 创建角色
+  const roleDefs = [
+    { name: '周岚', desc: '主理人 · 12年的坚守。不反对变化，但反对仓促决定。最怕店改得面目全非，丢失了这家老店最初的灵魂与温度。' },
+    { name: '林澈', desc: '推动者 · 深度参与。持续推动主动求变，拒绝内耗拥抱生机。最怕在无休止的犹豫和讨论中消耗生命力。' },
+    { name: '阿宁', desc: '老员工 · 落地人。运转中枢深谙门道，最终执行者。最怕所有的突发状况都被默认由她来收尾。' },
+    { name: '许岩', desc: '熟客 · 旁观者。多年熟客一直在外面看着这家店。只帮有共识、有方向的团队。' },
+  ];
+  const roleIds = {};
+  roleDefs.forEach(r => {
+    stmts.addRole.run(groupId, sessionId, r.name, r.desc);
+  });
+  const roles = stmts.getRolesByGroup.all(groupId, sessionId);
+  roles.forEach(r => { roleIds[r.name] = r.id; });
+
+  // 创建4幕剧本（含角色专属内容）
+  const sceneDefs = [
+    {
+      title: '第一幕 · 灯还亮着',
+      content: '第一次讨论，每个人都憋了很久。空气里弥漫着未说出口的情绪，仿佛咖啡的蒸汽，既温暖又压抑。\n\n明天，房东就会来问最后决定。621号店在梧桐树下静静开了12年。租期将尽，房东的最后通牒就在明天。今晚，所有与这家店命运相连的人再次聚首，围坐在熟悉的旧木桌旁，试图在热气氤氲中，共同做出一个关于「去与留」的最终抉择。\n\n💡 值得留意：这场讨论为什么从一开始就进展不顺？是长久积压的情绪爆发，还是沟通方式的本质错位？'
+    },
+    {
+      title: '第二幕 · 门快关了',
+      content: '第一轮讨论不欢而散。咖啡凉了，气氛却更紧了。\n\n每个人都说了话，但没人觉得被听进去。沉默之后，有人先开了口。这一次，他们不再争「要不要改」，而是开始说出那些一直卡在嗓子眼的、具体的事。\n\n这一轮你要开始说得更具体。你不能只当观察者。要说出你作为角色最明显看到的问题。'
+    },
+    {
+      title: '第三幕 · 杯子还温着',
+      content: '时间已经更晚了。前一轮讨论结束后，其他人暂时离开，只剩周岚和林澈留在店里。\n\n林澈收到消息：老街夜行活动那边还有一个位置，如果621号店要参加，今晚就必须回。\n\n这像是一个机会，也像是一根点着火药的引线。因为这不再是「以后再说」，而是一个当下就要表态的时刻。'
+    },
+    {
+      title: '第四幕 · 天快亮了',
+      content: '在最后的讨论里，大家逐渐意识到：621号店真正的问题，不只是经营，而是这些人已经很久没有把彼此真正想说的话说清楚了。\n\n请完成以下四项：\n1. 我们共同真正想守住的是什么？\n2. 如果继续，我们新的三条沟通约定是什么？\n3. 最终决定是什么？（继续经营 / 小幅转型 / 暂停整理 / 体面告别）\n4. 留给621号店的一句话'
+    }
+  ];
+
+  sceneDefs.forEach((s, idx) => {
+    const sceneNum = idx + 1;
+    const sceneResult = stmts.addScene.run(sessionId, sceneNum, s.title, s.content);
+  });
+
+  res.json({
+    success: true,
+    session: { code, id: sessionId, title },
+    message: '预设沙龙「喙语621号店」已创建！'
+  });
 });
 
 // ==================== Socket.IO ====================
@@ -247,7 +343,7 @@ io.on('connection', (socket) => {
       ...g,
       roles: stmts.getRolesByGroup.all(g.id, session.id)
     }));
-    const scenes = stmts.getScenes.all(session.id);
+    const scenes = stmts.getScenes.all(session.id).map(s => enrichSceneWithRoleContent(s, session.id));
     const participants = stmts.getParticipants.all(session.id);
     socket.emit('instructor:init', {
       session,
@@ -327,9 +423,11 @@ io.on('connection', (socket) => {
     const participants = stmts.getParticipants.all(session.id);
     io.to(`session:${code}`).emit('participants_updated', { participants });
 
-    // 如果已经有推送的剧本，立即发给该学员
+    // 如果已经有推送的剧本，立即发给该学员（含角色专属内容）
     if (session.current_scene > 0) {
-      const pushedScenes = stmts.getScenes.all(session.id).filter(s => s.scene_number <= session.current_scene);
+      const pushedScenes = stmts.getScenes.all(session.id)
+        .filter(s => s.scene_number <= session.current_scene)
+        .map(s => enrichSceneWithRoleContent(s, session.id));
       socket.emit('scene:pushed', { scenes: pushedScenes, currentScene: session.current_scene });
     }
   });
@@ -343,7 +441,7 @@ io.on('connection', (socket) => {
     if (session.status === 'preparing') {
       stmts.updateSessionStatus.run('active', code);
     }
-    const scenes = stmts.getScenes.all(session.id);
+    const scenes = stmts.getScenes.all(session.id).map(s => enrichSceneWithRoleContent(s, session.id));
     const pushedScenes = scenes.filter(s => s.scene_number <= sceneNumber);
     // 广播给场次内所有人（包括讲师）
     io.to(`session:${code}`).emit('scene:pushed', {

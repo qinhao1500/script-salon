@@ -74,6 +74,17 @@ socket.on('scene:pushed', (data) => {
   renderScripts();
 });
 
+// 当之前已选角色、后来收到新推送时，更新 sessionData 中的场景（含 role_content）
+socket.on('participant:role_selected', (data) => {
+  myGroup = data.group;
+  myRole = data.role;
+  enterScriptView();
+  // 如果已经有推送场景，保存场景数据
+  if (sessionData.session && sessionData.session.pushedScenes) {
+    renderScripts();
+  }
+});
+
 socket.on('session_updated', (data) => {
   // 刷新可用角色
   if (data.roles) {
@@ -212,13 +223,28 @@ function renderScripts() {
   badge.textContent = `第 ${currentScene} 幕`;
   badge.className = 'badge badge-green';
 
-  scriptContent.innerHTML = scenes.map(s => `
-    <div class="scene" style="${s.scene_number === currentScene ? 'animation-delay:0s' : 'animation-delay:0.1s'}">
-      <div class="scene-number">第 ${s.scene_number} 幕 ${s.scene_number === currentScene ? '· 最新' : ''}</div>
-      <div class="scene-title">${escapeHtml(s.title)}</div>
-      <div class="scene-content">${escapeHtml(s.content)}</div>
-    </div>
-  `).join('');
+  scriptContent.innerHTML = scenes.map(s => {
+    // 检查是否有当前角色的专属内容
+    let roleSpecificHtml = '';
+    if (s.role_content && myRole) {
+      const roleText = s.role_content[myRole.id];
+      if (roleText && roleText.trim()) {
+        roleSpecificHtml = `
+          <div class="role-script" style="margin-top:16px;padding-top:16px;border-top:1px solid rgba(255,107,107,0.2)">
+            <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:8px;letter-spacing:1px">🎭 你的角色剧本</div>
+            <div style="font-size:14px;line-height:1.8;color:var(--text-primary);white-space:pre-wrap">${escapeHtml(roleText)}</div>
+          </div>`;
+      }
+    }
+    return `
+      <div class="scene" style="${s.scene_number === currentScene ? 'animation-delay:0s' : 'animation-delay:0.1s'}">
+        <div class="scene-number">第 ${s.scene_number} 幕 ${s.scene_number === currentScene ? '· 最新' : ''}</div>
+        <div class="scene-title">${escapeHtml(s.title)}</div>
+        <div class="scene-content">${escapeHtml(s.content)}</div>
+        ${roleSpecificHtml}
+      </div>
+    `;
+  }).join('');
 }
 
 // ==================== 返回 ====================

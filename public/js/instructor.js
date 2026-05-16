@@ -8,6 +8,43 @@ let sessionData = {
 };
 
 // ==================== 创建场次 ====================
+async function createPresetSession() {
+  const btn = document.querySelector('#stepCreate .btn-secondary');
+  const origText = btn.textContent;
+  btn.textContent = '正在创建...';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/preset/salon-621', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.message || '创建失败');
+
+    sessionCode = data.session.code;
+    sessionData.session = { code: sessionCode, id: data.session.id, title: data.session.title, current_scene: 0 };
+
+    socket.emit('instructor:join', sessionCode);
+
+    document.getElementById('stepCreate').style.display = 'none';
+    document.getElementById('contentArea').style.display = 'block';
+    document.getElementById('codeSection').style.display = 'block';
+    document.getElementById('sessionCode').textContent = sessionCode;
+    document.getElementById('pageTitle').textContent = '喙语621号店 · 沉浸式沟通沙龙';
+    document.getElementById('pageSubtitle').textContent = `场次码: ${sessionCode}`;
+    document.getElementById('headerActions').style.display = 'flex';
+
+    toggleStep('stepGroups');
+    toast('🎭 预设沙龙创建成功！', 'success');
+  } catch (err) {
+    toast(err.message || '创建失败', 'error');
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
+}
+
 async function createSession() {
   const title = document.getElementById('sessionTitle').value.trim() || '沟通沙龙';
   const btn = document.querySelector('#stepCreate .btn');
