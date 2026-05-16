@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0a0a1a">
+  <title>讲师控制台 - 剧本杀沙龙</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<div class="toast-container"></div>
+
+<div class="page" id="app">
+  <!-- 顶部栏 -->
+  <div class="page-header">
+    <div>
+      <div class="page-title" id="pageTitle">讲师控制台</div>
+      <div class="page-subtitle" id="pageSubtitle">创建并管理你的场次</div>
+    </div>
+    <div class="header-actions" id="headerActions" style="display:none">
+      <button class="btn btn-ghost btn-icon" onclick="copyCode()" title="复制场次码">📋</button>
+    </div>
+  </div>
+
+  <!-- 场次码展示（创建后出现） -->
+  <div id="codeSection" style="display:none">
+    <div class="card code-display">
+      <div class="label">场次码</div>
+      <div class="code" id="sessionCode">0000</div>
+      <div style="margin-top:12px">
+        <button class="btn btn-primary btn-sm" onclick="copyCode()">复制场次码</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 步骤流程 -->
+  <div class="steps" id="stepsContainer">
+    <!-- 没有场次时显示创建 -->
+    <div class="step active" id="stepCreate">
+      <div class="step-body" style="display:block">
+        <div class="input-group">
+          <label class="input-label">场次名称</label>
+          <input class="input" id="sessionTitle" placeholder="例如：第1期沟通沙龙" value="沟通沙龙">
+        </div>
+        <button class="btn btn-primary btn-block" onclick="createSession()">创建场次</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 内容区域（有场次后显示） -->
+  <div id="contentArea" style="display:none">
+    <div class="steps" id="stepsList">
+      <!-- 步骤1：管理小组 -->
+      <div class="step" id="stepGroups">
+        <div class="step-header" onclick="toggleStep('stepGroups')">
+          <div class="step-number">1</div>
+          <div class="step-title">小组管理</div>
+          <span class="step-arrow">▼</span>
+        </div>
+        <div class="step-body">
+          <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">添加你的沙龙小组，每个小组内的学员会分配到不同的角色。</p>
+          <div class="inline-form">
+            <input class="input" id="groupInput" placeholder="小组名称，如：第一组" maxlength="20">
+            <button class="btn btn-primary btn-sm" onclick="addGroup()">添加</button>
+          </div>
+          <div id="groupList"></div>
+          <div id="groupEmpty" class="empty-state">
+            <div class="icon">👥</div>
+            <div class="text">还没有小组，添加一个吧</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 步骤2：管理角色 -->
+      <div class="step" id="stepRoles">
+        <div class="step-header" onclick="toggleStep('stepRoles')">
+          <div class="step-number">2</div>
+          <div class="step-title">角色管理</div>
+          <span class="step-arrow">▼</span>
+        </div>
+        <div class="step-body">
+          <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">为每个小组设定角色。学员加入时会选择角色，每个角色只能被一人选择。</p>
+          <div id="rolesContent">
+            <div class="empty-state">
+              <div class="icon">🎭</div>
+              <div class="text">请先在「小组管理」中添加小组</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 步骤3：编辑剧本 -->
+      <div class="step" id="stepScenes">
+        <div class="step-header" onclick="toggleStep('stepScenes')">
+          <div class="step-number">3</div>
+          <div class="step-title">剧本编辑</div>
+          <span class="step-arrow">▼</span>
+        </div>
+        <div class="step-body">
+          <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">按幕次编写剧本内容。讲师每次推送一幕，学员端实时收到。</p>
+          <div class="card" style="margin-bottom:16px;background:var(--bg-elevated)">
+            <div class="input-group">
+              <label class="input-label">幕次标题</label>
+              <input class="input" id="sceneTitle" placeholder="例如：第一幕 · 案发现场">
+            </div>
+            <div class="input-group">
+              <label class="input-label">剧本内容</label>
+              <textarea class="input" id="sceneContent" placeholder="输入这一幕的剧本内容..." rows="5"></textarea>
+            </div>
+            <button class="btn btn-primary btn-block" onclick="addScene()">添加剧本</button>
+          </div>
+          <div id="sceneList"></div>
+          <div id="sceneEmpty" class="empty-state">
+            <div class="icon">📜</div>
+            <div class="text">还没有剧本内容</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 步骤4：推送控制 -->
+      <div class="step" id="stepPush">
+        <div class="step-header" onclick="toggleStep('stepPush')">
+          <div class="step-number">4</div>
+          <div class="step-title">推送控制</div>
+          <span class="step-arrow">▼</span>
+        </div>
+        <div class="step-body">
+          <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">点击「推送」按钮，对应的剧本幕次将实时发送给所有学员。</p>
+          
+          <!-- 参与人数 -->
+          <div id="participantSummary" style="margin-bottom:16px">
+            <div class="card" style="background:var(--bg-elevated);padding:12px 16px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:16px">👤</span>
+                <span style="font-size:14px;color:var(--text-secondary)">已加入</span>
+                <span style="font-size:20px;font-weight:700;color:var(--gold)" id="participantCount">0</span>
+                <span style="font-size:14px;color:var(--text-secondary)">人</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 参与者列表 -->
+          <div id="participantList"></div>
+
+          <!-- 推送按钮 -->
+          <div style="margin-top:16px">
+            <div id="sceneControls" class="scene-controls"></div>
+            <div id="sceneControlsEmpty" class="empty-state">
+              <div class="icon">📝</div>
+              <div class="text">请先在「剧本编辑」中添加剧本</div>
+            </div>
+          </div>
+
+          <!-- 结束场次 -->
+          <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border)">
+            <button class="btn btn-secondary btn-block" onclick="endSession()" style="color:var(--accent)">结束场次</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/socket-client.js"></script>
+<script src="/js/instructor.js"></script>
+</body>
+</html>

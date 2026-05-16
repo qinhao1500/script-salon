@@ -1,0 +1,5 @@
+node_modules/
+salon.db
+salon.db-shm
+salon.db-wal
+.DS_Store
