@@ -125,8 +125,7 @@ function renderScripts() {
   const cs=sessionData.session?sessionData.session.currentScene:0;
 
   if(ss&&ss.length>0){
-    const bar=document.getElementById('progressBarContainer');bar.style.display='block';
-    document.getElementById('progressBar').innerHTML=ss.map((s,i)=>{const n=i+1;const active=n===cs;const done=n<=cs;let cls='progress-dot';if(active)cls+=' active';else if(done)cls+=' done';const lc=i<ss.length-1?(n<=cs?'progress-line done':'progress-line'):'';return '<div class="'+cls+'"></div>'+(i<ss.length-1?'<div class="'+lc+'"></div>':'');}).join('');
+    renderProgressBarClickable(ss, cs);
   }
 
   if(!ss||!ss.length||cs===0){

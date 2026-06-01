@@ -359,12 +359,25 @@ function renderScenes(){
 }
 
 function renderProgressBar(scenes, currentScene) {
-  const c=document.getElementById('progressBarContainer');const b=document.getElementById('progressBar');
+  var c=document.getElementById('progressBarContainer');var b=document.getElementById('progressBar');
   if(!c||!b)return;
   if(!scenes||!scenes.length){c.style.display='none';return;}
   c.style.display='block';
-  b.innerHTML=scenes.map((s,i)=>{const n=i+1;const active=n===currentScene;const done=n<=currentScene;let cls='progress-dot';if(active)cls+=' active';else if(done)cls+=' done';const lc=i<scenes.length-1?(n<=currentScene?'progress-line done':'progress-line'):'';return '<div class="'+cls+'"></div>'+(i<scenes.length-1?'<div class="'+lc+'"></div>':'');
-  }).join('');
+  var colors = ['#B85C3A','#E8923A','#3A9E7A','#5A8AB5','#9A6A7A'];
+  var html = '';
+  for(var i = 0; i < scenes.length; i++) {
+    var n = i+1; var isActive = n===currentScene; var isDone = n<=currentScene;
+    var color = colors[i % colors.length];
+    var cls = 'progress-dot'; if(isActive) cls+=' active'; else if(isDone) cls+=' done';
+    var dotStyle = isDone ? 'background:'+color+';border-color:'+color : isActive ? 'background:'+color+';border-color:'+color : '';
+    html += '<div class="'+cls+'" style="cursor:pointer;'+dotStyle+'" title="第'+n+'幕"></div>';
+    if(i < scenes.length-1) {
+      var lineCls = n<=currentScene ? 'progress-line done' : 'progress-line';
+      if(n<=currentScene) html += '<div class="'+lineCls+'" style="background:'+color+'"></div>';
+      else html += '<div class="'+lineCls+'"></div>';
+    }
+  }
+  b.innerHTML = html;
 }
 
 function renderSceneControls(){
