@@ -39,10 +39,12 @@ socket.on('participant:init', (d) => {
 socket.on('participant:role_selected', (d) => { myGroup=d.group; myRole=d.role; enterScriptView(); });
 socket.on('participant:error', (m) => { toast(m,'error'); });
 socket.on('scene:pushed', (d) => {
-  sessionData.session.currentScene = d.currentScene;
-  sessionData.session.pushedScenes = d.scenes;
-  currentViewingScene = d.scenes.length - 1;
-  renderScripts();
+  try {
+    sessionData.session.currentScene = d.currentScene;
+    sessionData.session.pushedScenes = d.scenes;
+    currentViewingScene = d.scenes.length - 1;
+    renderScripts();
+  } catch(e) { console.error('scene:pushed error:', e); }
 });
 socket.on('all_unlocked', () => {
   unlockedTiers = {}; // 重置，重新加载时会全部显示已解锁
@@ -98,6 +100,8 @@ function enterScriptView() {
   document.getElementById('myRoleDisplay').style.color=rc;
   currentViewingScene = 0;
   renderScripts();
+  // 启动定时轮询（双重保障，防止socket遗漏）
+  startScenePolling();
 }
 
 // ==================== 字体控制 ====================
@@ -318,6 +322,38 @@ function escapeHtml(str){const d=document.createElement('div');d.textContent=str
 function hexToRgb(hex) {
   const c = hex.replace('#','');
   return parseInt(c.substring(0,2),16)+','+parseInt(c.substring(2,4),16)+','+parseInt(c.substring(4,6),16);
+}
+
+// ==================== 定时轮询：双重保障推送不丢失 ====================
+let scenePollTimer = null;
+
+function startScenePolling() {
+  if (scenePollTimer) clearInterval(scenePollTimer);
+  scenePollTimer = setInterval(async function() {
+    if (!sessionCode || !myRole) return;
+    try {
+      var r = await fetch('/api/session/' + sessionCode + '/public');
+      var d = await r.json();
+      if (!d.success || !d.session) return;
+      var cs = d.session.current_scene || 0;
+      var currentKnown = sessionData.session ? sessionData.session.currentScene : 0;
+      if (cs > 0 && cs !== currentKnown) {
+        var r2 = await fetch('/api/session/' + sessionCode + '/full');
+        var d2 = await r2.json();
+        if (d2.success) {
+          sessionData.session = d2.session;
+          sessionData.session.pushedScenes = d2.scenes.filter(function(s) { return s.scene_number <= cs; });
+          currentViewingScene = sessionData.session.pushedScenes.length - 1;
+          renderScripts();
+          toast('新内容已推送','info');
+        }
+      }
+    } catch(e) {}
+  }, 4000);
+}
+
+function stopScenePolling() {
+  if (scenePollTimer) { clearInterval(scenePollTimer); scenePollTimer = null; }
 }
 
 // 恢复上次连接
