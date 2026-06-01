@@ -33,6 +33,63 @@ function getRoleColor(n) { return ROLE_COLORS[n]||'#9A8A7A'; }
   setTimeout(() => { const i = document.getElementById('pwdInput'); if(i) i.focus(); }, 300);
 })();
 
+// ==================== 断线重连（刷新后恢复场次）====================
+(function tryRestoreSession() {
+  const saved = localStorage.getItem('instructor_session');
+  if (!saved) return;
+  try {
+    const data = JSON.parse(saved);
+    if (!data.code || !data.title) return;
+    // 如果密码验证还没完成，等验证后再恢复
+    const waitAndRestore = setInterval(() => {
+      if (sessionStorage.getItem('lecturer_verified') === 'true') {
+        clearInterval(waitAndRestore);
+        restoreSession(data);
+      }
+    }, 200);
+    // 超时停止
+    setTimeout(() => clearInterval(waitAndRestore), 10000);
+  } catch(e) {}
+})();
+
+async function restoreSession(data) {
+  // 先检查场次是否还存在
+  try {
+    const r = await fetch('/api/session/' + data.code + '/full');
+    const d = await r.json();
+    if (!d.success) {
+      localStorage.removeItem('instructor_session');
+      return;
+    }
+    sessionCode = data.code;
+    sessionData = { session: d.session, groups: d.groups, scenes: d.scenes, participants: d.participants };
+    socket.emit('instructor:join', sessionCode);
+    // 恢复 UI
+    document.getElementById('codeBanner').style.display = 'block';
+    document.getElementById('sessionCode').textContent = sessionCode;
+    document.getElementById('pageTitle').textContent = '☕ ' + d.session.title;
+    document.getElementById('pageSubtitle').textContent = '场次码: ' + sessionCode;
+    document.getElementById('headerActions').style.display = 'block';
+    document.getElementById('tabBar').style.display = 'flex';
+    document.getElementById('sessionInfo').style.display = 'block';
+    document.getElementById('noSessionHint').style.display = 'none';
+    document.getElementById('settingsCode').textContent = sessionCode;
+    // 在页面顶部显示恢复提示
+    const banner = document.createElement('div');
+    banner.id = 'restoreBanner';
+    banner.className = 'card';
+    banner.style.cssText = 'background:rgba(245,166,35,0.1);border-color:var(--accent);text-align:center;padding:12px;margin-bottom:12px';
+    banner.innerHTML = '☕ 已恢复上次场次 <strong>' + escapeHtml(d.session.title) + '</strong>（' + sessionCode + '）<br><span style="font-size:12px;color:var(--text-muted)">数据已自动恢复</span>';
+    document.getElementById('tabSession').insertBefore(banner, document.getElementById('tabSession').firstChild);
+    setTimeout(() => { const b = document.getElementById('restoreBanner'); if(b) b.remove(); }, 5000);
+    renderAll();
+    toast('已恢复上次场次', 'success');
+  } catch(e) {
+    console.log('恢复失败:', e);
+    localStorage.removeItem('instructor_session');
+  }
+}
+
 // ==================== 底部导航 ====================
 document.querySelectorAll('#tabBar .tab').forEach(tab => {
   tab.addEventListener('click', function() {
@@ -75,9 +132,18 @@ async function createPresetSession() {
   finally{btn.textContent='☕ 一键创建「621号店」';btn.disabled=false}
 }
 
+function saveSession() {
+  if (!sessionCode) return;
+  localStorage.setItem('instructor_session', JSON.stringify({
+    code: sessionCode,
+    title: sessionData.session ? sessionData.session.title : ''
+  }));
+}
+
 function afterCreate(session) {
   sessionCode = session.code;
   sessionData.session = { code:sessionCode, id:session.id, title:session.title, current_scene:0 };
+  saveSession();
   socket.emit('instructor:join', sessionCode);
   document.getElementById('codeBanner').style.display='block';
   document.getElementById('sessionCode').textContent=sessionCode;
@@ -102,9 +168,10 @@ socket.on('session_updated', (data) => {
   if(data.groups) fetchFullData();
   if(data.roles){const g=sessionData.groups.find(g=>g.id===data.roles.groupId);if(g)g.roles=data.roles.roles;renderRoles();}
   if(data.scenes){sessionData.scenes=data.scenes;renderScenes();renderSceneControls();}
+  saveSession();
 });
-socket.on('participants_updated',(d)=>{sessionData.participants=d.participants;renderParticipants();renderSceneControls();});
-socket.on('scene:pushed',(d)=>{sessionData.session.current_scene=d.currentScene;renderSceneControls();});
+socket.on('participants_updated',(d)=>{sessionData.participants=d.participants;renderParticipants();renderSceneControls();saveSession();});
+socket.on('scene:pushed',(d)=>{sessionData.session.current_scene=d.currentScene;renderSceneControls();saveSession();});
 socket.on('session:ended',()=>{toast('场次已结束','info');resetView();});
 
 async function fetchFullData() {
@@ -141,7 +208,11 @@ async function insertAfter(sid){
 
 // ==================== 推送控制 ====================
 function pushScene(n){if(!confirm('确定推送第'+n+'幕？'))return;socket.emit('instructor:push_scene',{code:sessionCode,sceneNumber:n});toast('第'+n+'幕已推送','success');}
-function endSession(){if(!confirm('确定结束场次？'))return;socket.emit('instructor:end',sessionCode);}
+function endSession(){
+  if(!confirm('确定结束场次？'))return;
+  localStorage.removeItem('instructor_session');
+  socket.emit('instructor:end',sessionCode);
+}
 function copyCode(){
   if(navigator.clipboard)navigator.clipboard.writeText(sessionCode).then(()=>toast('已复制','success'));
   else{const ta=document.createElement('textarea');ta.value=sessionCode;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast('已复制','success');}
