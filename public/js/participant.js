@@ -101,8 +101,14 @@ function enterScriptView() {
 function changeFontSize(delta) {
   fontSize = Math.min(24, Math.max(12, fontSize + delta));
   localStorage.setItem('reader_font_size', fontSize);
-  document.getElementById('sceneCard').style.fontSize = fontSize + 'px';
   document.getElementById('fontSizeDisplay').textContent = fontSize;
+  // 更新当前所有文本内容的字号
+  var card = document.getElementById('sceneCard');
+  if(card) {
+    card.querySelectorAll('.scene-content, .role-script-content').forEach(function(el) {
+      el.style.fontSize = fontSize + 'px';
+    });
+  }
 }
 
 // ==================== 横向场景导航 ====================
@@ -153,31 +159,31 @@ function renderCurrentScene() {
   }
 
   // 处理内容：高亮自己的台词并加粗
-  let displayContent = s.content;
+  var displayContent = s.content;
   if(myRole) {
-    const allRoles = ['周岚','林澈','阿宁','许言','许岩'];
-    // 先处理自己的角色——加粗
-    const myName = myRole.name;
-    const myRegex = new RegExp('(\\*\\*'+myName+'\\*\\*)', 'g');
-    displayContent = displayContent.replace(myRegex, '<strong style="color:'+roleColor+';font-weight:800">**'+myName+'**</strong>');
-    // 再处理其他角色——仅染色
-    allRoles.forEach(name => {
-      if(name === myName) return;
-      const color = getRoleColor(name);
-      const regex = new RegExp('\\*\\*'+name+'\\*\\*', 'g');
-      displayContent = displayContent.replace(regex, '<span style="color:'+color+';font-weight:600">**'+name+'**</span>');
-    });
-    // 将 ** ** 标记替换为视觉加粗
-    displayContent = displayContent.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    var allRoles = ['周岚','林澈','阿宁','许言','许岩'];
+    var myName = myRole.name;
+    // 一次性处理：自己的加粗高亮，其他的染色
+    for(var ri = 0; ri < allRoles.length; ri++) {
+      var name = allRoles[ri];
+      var color = getRoleColor(name);
+      var isMe = name === myName;
+      var re = new RegExp('\\*\\*' + name + '\\*\\*', 'g');
+      if(isMe) {
+        displayContent = displayContent.replace(re, '<strong style="color:' + color + ';font-size:1.1em">' + name + '</strong>');
+      } else {
+        displayContent = displayContent.replace(re, '<span style="color:' + color + ';font-weight:600">' + name + '</span>');
+      }
+    }
+    // 剩余**内容**加粗
+    displayContent = displayContent.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   }
 
-  const card=document.getElementById('sceneCard');
-  card.className='scene '+roleClass;
-  card.style.animation='fadeInUp 0.3s ease forwards';
-  card.style.fontSize=fontSize+'px';
+  var card = document.getElementById('sceneCard');
+  card.className = 'scene ' + roleClass;
+  card.style.animation = 'fadeInUp 0.3s ease forwards';
   
-  // 字体控制按钮
-  const fontControls = '<div style="display:flex;align-items:center;gap:8px;justify-content:flex-end;margin-bottom:8px">'+
+  var fontControls = '<div style="display:flex;align-items:center;gap:8px;justify-content:flex-end;margin-bottom:8px">'+
     '<span style="font-size:11px;color:var(--text-muted)">字号</span>'+
     '<button class="btn btn-ghost btn-sm" onclick="changeFontSize(-1)" style="font-size:14px;padding:2px 8px;border:1px solid var(--divider);border-radius:4px">A−</button>'+
     '<span id="fontSizeDisplay" style="font-size:12px;color:var(--text-secondary);min-width:20px;text-align:center">'+fontSize+'</span>'+
@@ -189,6 +195,8 @@ function renderCurrentScene() {
     '<div class="scene-title">'+escapeHtml(s.title)+'</div>'+
     '<div class="scene-content" style="font-size:'+fontSize+'px;white-space:pre-wrap;line-height:2">'+displayContent+'</div>'+
     roleHtml;
+  // 确保字体大小应用到所有内容
+  card.querySelectorAll('.scene-content, .role-script-content').forEach(function(el){el.style.fontSize=fontSize+'px';});
 }
 
 // ==================== 返回 ====================

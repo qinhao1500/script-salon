@@ -40,15 +40,17 @@ function getRoleColor(n) { return ROLE_COLORS[n]||'#9A8A7A'; }
   try {
     const data = JSON.parse(saved);
     if (!data.code || !data.title) return;
-    // 如果密码验证还没完成，等验证后再恢复
-    const waitAndRestore = setInterval(() => {
+    // 等密码验证完成后恢复
+    var waitCount = 0;
+    var waitAndRestore = setInterval(function() {
+      waitCount++;
       if (sessionStorage.getItem('lecturer_verified') === 'true') {
         clearInterval(waitAndRestore);
         restoreSession(data);
+      } else if (waitCount > 150) { // 30秒超时
+        clearInterval(waitAndRestore);
       }
     }, 200);
-    // 超时停止
-    setTimeout(() => clearInterval(waitAndRestore), 10000);
   } catch(e) {}
 })();
 
@@ -86,7 +88,6 @@ async function restoreSession(data) {
     toast('已恢复上次场次', 'success');
   } catch(e) {
     console.log('恢复失败:', e);
-    localStorage.removeItem('instructor_session');
   }
 }
 
