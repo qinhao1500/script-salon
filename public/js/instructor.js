@@ -253,7 +253,19 @@ async function insertAfter(sid){
 }
 
 // ==================== 推送控制 ====================
-function pushScene(n){if(!confirm('确定推送第'+n+'幕？'))return;socket.emit('instructor:push_scene',{code:sessionCode,sceneNumber:n});toast('第'+n+'幕已推送','success');}
+async function pushScene(n){
+  if(!confirm('确定推送第'+n+'幕？'))return;
+  try {
+    var r = await fetch('/api/session/'+sessionCode+'/push-scene',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sceneNumber:n})});
+    var d = await r.json();
+    if(d.success) toast('第'+n+'幕已推送','success');
+    else toast('推送失败:'+(d.message||'未知错误'),'error');
+  } catch(e) {
+    // 兜底：走socket
+    socket.emit('instructor:push_scene',{code:sessionCode,sceneNumber:n});
+    toast('第'+n+'幕已推送(备用通道)','success');
+  }
+}
 function endSession(){
   if(!confirm('确定结束场次？'))return;
   localStorage.removeItem('instructor_session');

@@ -640,23 +640,24 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 讲师推送剧本
-  socket.on('instructor:push_scene', ({ code, sceneNumber }) => {
+  // 讲师推送剧本（HTTP 版，确保可靠）
+  app.post('/api/session/:code/push-scene', (req, res) => {
+    const { sceneNumber } = req.body;
+    const code = req.params.code;
     const session = stmts.getSessionByCode.get(code);
-    if (!session) return;
+    if (!session) return res.status(404).json({ success: false, message: '场次不存在' });
     stmts.setCurrentScene.run(sceneNumber, code);
-    // 更新状态
     if (session.status === 'preparing') {
       stmts.updateSessionStatus.run('active', code);
     }
     const scenes = stmts.getScenes.all(session.id).map(s => enrichSceneWithRoleContent(s, session.id));
     const pushedScenes = scenes.filter(s => s.scene_number <= sceneNumber);
-    // 广播给场次内所有人（包括讲师）
-    io.to(`session:${code}`).emit('scene:pushed', {
+    io.to('session:' + code).emit('scene:pushed', {
       currentScene: sceneNumber,
       scenes: pushedScenes
     });
-    console.log(`[推送] 场次 ${code} 推送第 ${sceneNumber} 幕`);
+    console.log('[HTTP推送] 场次 ' + code + ' 推送第 ' + sceneNumber + ' 幕');
+    res.json({ success: true });
   });
 
   // 讲师结束场次
