@@ -7,6 +7,20 @@ let sessionData = {
   participants: []
 };
 
+// 角色颜色映射
+const ROLE_COLORS = {
+  '周岚': '#B85C3A',
+  '林澈': '#E8923A',
+  '阿宁': '#3A9E7A',
+  '许岩': '#5A8AB5',
+  '许言': '#5A8AB5'
+};
+function getRoleColor(name) { return ROLE_COLORS[name] || '#9A8A7A'; }
+function getRoleClass(name) {
+  const map = { '周岚':'zhou','林澈':'lin','阿宁':'a','许岩':'xu','许言':'xu' };
+  return map[name] || '';
+}
+
 // ==================== 创建场次 ====================
 async function createPresetSession() {
   const btn = document.querySelector('#stepCreate .btn-secondary');
@@ -523,9 +537,9 @@ function renderParticipants() {
       <div class="participant-list">
         ${byGroup[gName].map(p => `
           <div class="participant-chip">
-            <span class="dot"></span>
+            <span class="dot" style="background:${getRoleColor(p.role_name)}"></span>
             ${escapeHtml(p.name)}
-            <span class="role-tag">· ${escapeHtml(p.role_name)}</span>
+            <span class="role-tag" style="color:${getRoleColor(p.role_name)}">· ${escapeHtml(p.role_name)}</span>
           </div>
         `).join('')}
       </div>
@@ -533,11 +547,32 @@ function renderParticipants() {
   `).join('');
 }
 
+function renderProgressBar(scenes, currentScene) {
+  const container = document.getElementById('progressBarContainer');
+  const bar = document.getElementById('progressBar');
+  if (!container || !bar) return;
+  if (!scenes || scenes.length === 0) { container.style.display = 'none'; return; }
+  container.style.display = 'block';
+  bar.innerHTML = scenes.map(function(s, i) {
+    var num = i + 1;
+    var isActive = num === currentScene;
+    var isDone = num <= currentScene;
+    var cls = 'progress-dot';
+    if (isActive) cls += ' active';
+    else if (isDone) cls += ' done';
+    var lineCls = i < scenes.length - 1 ? (num <= currentScene ? 'progress-line done' : 'progress-line') : '';
+    return '<div class="' + cls + '"></div>' + (i < scenes.length - 1 ? '<div class="' + lineCls + '"></div>' : '');
+  }).join('');
+}
+
 function renderSceneControls() {
   const container = document.getElementById('sceneControls');
   const empty = document.getElementById('sceneControlsEmpty');
   const scenes = sessionData.scenes;
   const currentScene = sessionData.session ? sessionData.session.current_scene : 0;
+
+  // 渲染进度条
+  renderProgressBar(scenes, currentScene);
 
   if (!scenes || scenes.length === 0) {
     container.innerHTML = '';

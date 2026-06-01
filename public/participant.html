@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#0a0a1a">
+  <meta name="theme-color" content="#FFFCF5">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icons/icon.svg">
-  <title>学员入口 - 剧本杀沙龙</title>
+  <title>学员入口 · 621号店</title>
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
@@ -17,30 +17,29 @@
 <div class="toast-container"></div>
 
 <div class="page" id="app">
-  <!-- 顶部栏 -->
   <div class="page-header">
     <div>
-      <div class="page-title">🎭 剧本杀沙龙</div>
+      <div class="page-title">☕ 621号店</div>
       <div class="page-subtitle" id="statusText">输入场次码加入</div>
     </div>
   </div>
 
-  <!-- 第一步：输入场次码 -->
+  <!-- 输入场次码 -->
   <div id="stepCode">
     <div class="card">
       <div class="input-group">
         <label class="input-label">场次码</label>
-        <input class="input" id="codeInput" placeholder="输入讲师给你的 4 位数字" maxlength="4" inputmode="numeric" pattern="[0-9]*" style="text-align:center;font-size:24px;font-weight:700;letter-spacing:6px">
+        <input class="input" id="codeInput" placeholder="输入讲师给你的场次码" maxlength="4" inputmode="numeric" pattern="[0-9]*" style="text-align:center;font-size:24px;font-weight:700;letter-spacing:6px">
       </div>
       <div class="input-group">
         <label class="input-label">你的名字</label>
         <input class="input" id="nameInput" placeholder="输入你的昵称或姓名" maxlength="20">
       </div>
-      <button class="btn btn-primary btn-block" onclick="joinSession()">加入场次</button>
+      <button class="btn btn-primary btn-block" onclick="joinSession()" style="margin:0;width:100%">加入场次</button>
     </div>
   </div>
 
-  <!-- 第二步：选择小组 -->
+  <!-- 选择小组 -->
   <div id="stepGroup" style="display:none">
     <div class="card" style="margin-bottom:16px">
       <div class="card-header">
@@ -51,7 +50,7 @@
     </div>
   </div>
 
-  <!-- 第三步：选择角色 -->
+  <!-- 选择角色 -->
   <div id="stepRole" style="display:none">
     <div class="card" style="margin-bottom:16px">
       <div class="card-header">
@@ -62,26 +61,26 @@
     </div>
   </div>
 
-  <!-- 第四步：等待/剧本 -->
+  <!-- 剧本阅读 -->
   <div id="stepScript" style="display:none">
-    <!-- 顶部信息 -->
-    <div class="card" style="background:var(--bg-elevated);padding:12px 16px;margin-bottom:16px">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <div>
-          <span style="font-size:14px;color:var(--text-secondary)">你的角色</span>
-          <div style="font-size:16px;font-weight:600;margin-top:2px">
-            <span id="myRoleDisplay"></span>
-            <span style="color:var(--text-muted);font-weight:400"> · </span>
-            <span id="myGroupDisplay" style="color:var(--text-secondary);font-weight:400"></span>
-          </div>
-        </div>
-        <span id="sceneStatusBadge" class="badge badge-gold">等待推送</span>
+    <!-- 角色信息条 -->
+    <div class="participant-info-bar">
+      <div class="participant-role-indicator" id="roleIndicator" style="background:var(--divider)"></div>
+      <div class="participant-info-text">
+        <div class="role-name" id="myRoleDisplay"></div>
+        <div class="group-name" id="myGroupDisplay"></div>
       </div>
+      <span id="sceneStatusBadge" class="badge badge-gold">等待推送</span>
+    </div>
+
+    <!-- 进度条 -->
+    <div id="progressBarContainer" style="display:none">
+      <div class="progress-bar" id="progressBar"></div>
     </div>
 
     <!-- 等待状态 -->
     <div id="waitingRoom" class="waiting-room">
-      <div class="icon">📖</div>
+      <div class="icon">☕</div>
       <div class="title">等待讲师推送剧本</div>
       <div class="desc">讲师稍后将会逐幕推送剧本<br>请耐心等候</div>
     </div>

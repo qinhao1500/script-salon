@@ -8,6 +8,16 @@ let sessionData = {
   groups: []
 };
 
+// 角色颜色映射
+const ROLE_COLORS = {
+  '周岚': '#B85C3A',
+  '林澈': '#E8923A',
+  '阿宁': '#3A9E7A',
+  '许岩': '#5A8AB5',
+  '许言': '#5A8AB5'
+};
+function getRoleColor(name) { return ROLE_COLORS[name] || '#9A8A7A'; }
+
 // ==================== 加入场次 ====================
 async function joinSession() {
   const code = document.getElementById('codeInput').value.trim();
@@ -199,6 +209,10 @@ function enterScriptView() {
 
   document.getElementById('myRoleDisplay').textContent = myRole.name;
   document.getElementById('myGroupDisplay').textContent = myGroup.name;
+  // 设置角色颜色
+  const roleColor = getRoleColor(myRole.name);
+  document.getElementById('roleIndicator').style.background = roleColor;
+  document.getElementById('myRoleDisplay').style.color = roleColor;
 
   renderScripts();
 }
@@ -209,6 +223,22 @@ function renderScripts() {
   const badge = document.getElementById('sceneStatusBadge');
   const scenes = sessionData.session && sessionData.session.pushedScenes;
   const currentScene = sessionData.session ? sessionData.session.currentScene : 0;
+
+  // 进度条
+  if (scenes && scenes.length > 0) {
+    const bar = document.getElementById('progressBarContainer');
+    bar.style.display = 'block';
+    document.getElementById('progressBar').innerHTML = scenes.map((s, i) => {
+      const num = i + 1;
+      const isActive = num === currentScene;
+      const isDone = num <= currentScene;
+      let cls = 'progress-dot';
+      if (isActive) cls += ' active';
+      else if (isDone) cls += ' done';
+      const lineCls = i < scenes.length - 1 ? (num <= currentScene ? 'progress-line done' : 'progress-line') : '';
+      return `<div class="${cls}"></div>${i < scenes.length - 1 ? `<div class="${lineCls}"></div>` : ''}`;
+    }).join('');
+  }
 
   if (!scenes || scenes.length === 0 || currentScene === 0) {
     waitingRoom.style.display = 'block';
