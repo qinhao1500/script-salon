@@ -1,7 +1,6 @@
 {
   "build": {
-    "command": "npm install",
-    "watchPatterns": ["package.json", "package-lock.json"]
+    "command": "npm install"
   },
   "deploy": {
     "startCommand": "node server.js",
