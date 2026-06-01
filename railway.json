@@ -1,0 +1,11 @@
+{
+  "build": {
+    "command": "npm install",
+    "watchPatterns": ["package.json", "package-lock.json"]
+  },
+  "deploy": {
+    "startCommand": "node server.js",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  }
+}
