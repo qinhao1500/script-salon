@@ -269,11 +269,61 @@ app.put('/api/session/:code/scene/:sceneId', (req, res) => {
 
 // 删除剧本幕次
 app.delete('/api/session/:code/scene/:sceneId', (req, res) => {
-  stmts.deleteScene.run(req.params.sceneId, req.params.code);
   const session = stmts.getSessionByCode.get(req.params.code);
-  const scenes = stmts.getScenes.all(session.id);
+  if (!session) return res.status(404).json({ success: false, message: '场次不存在' });
+  const deletedScene = db.prepare('SELECT scene_number FROM scenes WHERE id = ? AND session_id = ?').get(req.params.sceneId, session.id);
+  if (!deletedScene) return res.status(404).json({ success: false, message: '场景不存在' });
+  stmts.deleteScene.run(req.params.sceneId, req.params.code);
+  // 重新编号
+  const remaining = stmts.getScenes.all(session.id);
+  db.transaction(() => {
+    remaining.forEach((s, i) => {
+      db.prepare('UPDATE scenes SET scene_number = ? WHERE id = ?').run(i + 1, s.id);
+    });
+  })();
+  const scenes = stmts.getScenes.all(session.id).map(s => enrichSceneWithRoleContent(s, session.id));
   io.to(`session:${req.params.code}`).emit('session_updated', { scenes });
   res.json({ success: true, scenes });
+});
+
+// 场景上移/下移
+app.put('/api/session/:code/scene/:sceneId/move', (req, res) => {
+  const session = stmts.getSessionByCode.get(req.params.code);
+  if (!session) return res.status(404).json({ success: false, message: '场次不存在' });
+  const { direction } = req.body; // 'up' or 'down'
+  const scenes = stmts.getScenes.all(session.id);
+  const idx = scenes.findIndex(s => s.id === parseInt(req.params.sceneId));
+  if (idx === -1) return res.status(404).json({ success: false, message: '场景不存在' });
+  const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= scenes.length) return res.json({ success: true, scenes: scenes.map(s => enrichSceneWithRoleContent(s, session.id)) });
+  db.transaction(() => {
+    db.prepare('UPDATE scenes SET scene_number = ? WHERE id = ?').run(scenes[swapIdx].scene_number, scenes[idx].id);
+    db.prepare('UPDATE scenes SET scene_number = ? WHERE id = ?').run(scenes[idx].scene_number, scenes[swapIdx].id);
+  })();
+  const updatedScenes = stmts.getScenes.all(session.id).map(s => enrichSceneWithRoleContent(s, session.id));
+  io.to(`session:${req.params.code}`).emit('session_updated', { scenes: updatedScenes });
+  res.json({ success: true, scenes: updatedScenes });
+});
+
+// 在指定场景后插入新场景
+app.post('/api/session/:code/scene/insert-after', (req, res) => {
+  const session = stmts.getSessionByCode.get(req.params.code);
+  if (!session) return res.status(404).json({ success: false, message: '场次不存在' });
+  const { afterSceneId, title, content } = req.body;
+  if (!title || !content) return res.status(400).json({ success: false, message: '缺少标题或内容' });
+  const scenes = stmts.getScenes.all(session.id);
+  const afterIdx = scenes.findIndex(s => s.id === afterSceneId);
+  const insertPosition = afterIdx === -1 ? scenes.length : afterIdx + 1;
+  db.transaction(() => {
+    // 将insertPosition及之后的场景编号后移
+    for (let i = scenes.length - 1; i >= insertPosition; i--) {
+      db.prepare('UPDATE scenes SET scene_number = ? WHERE id = ?').run(scenes[i].scene_number + 1, scenes[i].id);
+    }
+    stmts.addScene.run(session.id, insertPosition + 1, title, content);
+  })();
+  const updatedScenes = stmts.getScenes.all(session.id).map(s => enrichSceneWithRoleContent(s, session.id));
+  io.to(`session:${req.params.code}`).emit('session_updated', { scenes: updatedScenes });
+  res.json({ success: true, scenes: updatedScenes });
 });
 
 // ==================== 预设沙龙 API ====================

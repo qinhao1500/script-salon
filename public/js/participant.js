@@ -1,311 +1,153 @@
-// ==================== 学员端逻辑 ====================
-let sessionCode = null;
-let myName = null;
-let myGroup = null;
-let myRole = null;
-let sessionData = {
-  session: null,
-  groups: []
-};
+// ==================== 学员端 ====================
+let sessionCode = null, myName = null, myGroup = null, myRole = null;
+let sessionData = { session: null, groups: [] };
+let currentViewingScene = 0; // 当前查看的场景索引
 
-// 角色颜色映射
-const ROLE_COLORS = {
-  '周岚': '#B85C3A',
-  '林澈': '#E8923A',
-  '阿宁': '#3A9E7A',
-  '许岩': '#5A8AB5',
-  '许言': '#5A8AB5'
-};
-function getRoleColor(name) { return ROLE_COLORS[name] || '#9A8A7A'; }
+const ROLE_COLORS = { '周岚':'#B85C3A','林澈':'#E8923A','阿宁':'#3A9E7A','许岩':'#5A8AB5','许言':'#5A8AB5' };
+function getRoleColor(n) { return ROLE_COLORS[n]||'#9A8A7A'; }
 
-// ==================== 加入场次 ====================
+// ==================== 加入 ====================
 async function joinSession() {
   const code = document.getElementById('codeInput').value.trim();
   const name = document.getElementById('nameInput').value.trim();
-
-  if (!code || code.length !== 4) {
-    toast('请输入 4 位场次码', 'error');
-    return;
-  }
-  if (!name) {
-    toast('请输入你的名字', 'error');
-    return;
-  }
-
-  // 先验证场次是否存在
+  if(!code||code.length!==4){toast('请输入4位场次码','error');return;}
+  if(!name){toast('请输入名字','error');return;}
   try {
-    const res = await fetch(`/api/session/${code}/public`);
-    const data = await res.json();
-    if (!data.success) {
-      toast(data.message || '场次不存在', 'error');
-      return;
-    }
-
-    sessionCode = code;
-    myName = name;
-    sessionData = data;
-
-    // 保存到本地存储，方便刷新后恢复
-    localStorage.setItem('salon_session', JSON.stringify({ code, name }));
-
-    // 加入 socket 房间
+    const r = await fetch('/api/session/'+code+'/public');
+    const d = await r.json();
+    if(!d.success){toast(d.message||'场次不存在','error');return;}
+    sessionCode = code; myName = name; sessionData = d;
+    localStorage.setItem('salon_session',JSON.stringify({code,name}));
     socket.emit('participant:join', code);
-
-    // 显示小组选择
     showGroupSelection();
-  } catch (err) {
-    toast('连接失败，请检查网络', 'error');
-  }
+  } catch(e) { toast('连接失败','error'); }
 }
 
-// ==================== Socket 事件 ====================
-socket.on('participant:init', (data) => {
-  sessionData.session = data.session;
-  sessionData.groups = data.groups;
-  // 如果在角色选择阶段，刷新角色状态
-  if (document.getElementById('stepRole').style.display !== 'none') {
-    renderRoles();
-  }
+// ==================== Socket ====================
+socket.on('participant:init', (d) => {
+  sessionData.session=d.session; sessionData.groups=d.groups;
+  if(document.getElementById('stepRole').style.display!=='none') renderRoles();
 });
-
-socket.on('participant:role_selected', (data) => {
-  myGroup = data.group;
-  myRole = data.role;
-  enterScriptView();
-});
-
-socket.on('participant:error', (msg) => {
-  toast(msg, 'error');
-});
-
-socket.on('scene:pushed', (data) => {
-  sessionData.session.currentScene = data.currentScene;
-  sessionData.session.pushedScenes = data.scenes;
+socket.on('participant:role_selected', (d) => { myGroup=d.group; myRole=d.role; enterScriptView(); });
+socket.on('participant:error', (m) => { toast(m,'error'); });
+socket.on('scene:pushed', (d) => {
+  sessionData.session.currentScene = d.currentScene;
+  sessionData.session.pushedScenes = d.scenes;
+  currentViewingScene = d.scenes.length - 1; // 跳到最新一幕
   renderScripts();
 });
-
-// 当之前已选角色、后来收到新推送时，更新 sessionData 中的场景（含 role_content）
-socket.on('participant:role_selected', (data) => {
-  myGroup = data.group;
-  myRole = data.role;
-  enterScriptView();
-  // 如果已经有推送场景，保存场景数据
-  if (sessionData.session && sessionData.session.pushedScenes) {
-    renderScripts();
-  }
-});
-
-socket.on('session_updated', (data) => {
-  // 刷新可用角色
-  if (data.roles) {
-    const group = sessionData.groups.find(g => g.id === data.roles.groupId);
-    if (group) {
-      group.roles = data.roles.roles.map(r => ({
-        ...r,
-        occupied: false // 这里不够准确，后面会刷新
-      }));
-    }
-  }
-  if (data.groups) {
-    // 需要重新获取公开数据
-    refreshPublicData();
-  }
-});
-
-socket.on('session:ended', () => {
-  toast('场次已结束，感谢参与！', 'info');
-  document.getElementById('statusText').textContent = '场次已结束';
-});
-
-// ==================== 刷新公开数据 ====================
-async function refreshPublicData() {
-  if (!sessionCode) return;
-  try {
-    const res = await fetch(`/api/session/${sessionCode}/public`);
-    const data = await res.json();
-    if (data.success) {
-      sessionData = data;
-      // 如果正在角色选择，刷新
-      if (document.getElementById('stepRole').style.display !== 'none') {
-        renderRoles();
-      }
-    }
-  } catch (err) {
-    console.error('刷新数据失败:', err);
-  }
-}
+socket.on('session:ended', () => { toast('场次已结束','info'); document.getElementById('statusText').textContent='已结束'; });
 
 // ==================== 页面切换 ====================
 function showGroupSelection() {
-  document.getElementById('stepCode').style.display = 'none';
-  document.getElementById('stepGroup').style.display = 'block';
-  document.getElementById('stepRole').style.display = 'none';
-  document.getElementById('stepScript').style.display = 'none';
-  document.getElementById('statusText').textContent = '选择小组';
-
+  document.getElementById('stepCode').style.display='none';
+  document.getElementById('stepGroup').style.display='block';
+  document.getElementById('stepRole').style.display='none';
+  document.getElementById('stepScript').style.display='none';
+  document.getElementById('statusText').textContent='选择小组';
   const list = document.getElementById('groupSelectList');
-  const groups = sessionData.groups;
-
-  if (!groups || groups.length === 0) {
-    list.innerHTML = `<div class="empty-state"><div class="icon">👥</div><div class="text">该场次暂未设置小组</div></div>`;
-    return;
-  }
-
-  list.innerHTML = groups.map(g => `
-    <button class="group-select-item" onclick="selectGroup(${g.id})">
-      <span>${escapeHtml(g.name)}</span>
-      <span class="arrow">→</span>
-    </button>
-  `).join('');
+  const gs = sessionData.groups;
+  if(!gs||!gs.length){list.innerHTML='<div class="empty-state"><div class="icon">👥</div><div class="text">暂无小组</div></div>';return;}
+  list.innerHTML=gs.map(g=>'<button class="group-select-item" onclick="selectGroup('+g.id+')"><span>'+escapeHtml(g.name)+'</span><span class="arrow">→</span></button>').join('');
 }
-
-function selectGroup(groupId) {
-  const group = sessionData.groups.find(g => g.id === groupId);
-  if (!group) return;
-
-  myGroup = group;
-
-  document.getElementById('stepGroup').style.display = 'none';
-  document.getElementById('stepRole').style.display = 'block';
-  document.getElementById('statusText').textContent = '选择角色';
-  document.getElementById('selectedGroupDisplay').textContent = group.name;
-
+function selectGroup(gid) {
+  myGroup = sessionData.groups.find(g=>g.id===gid); if(!myGroup) return;
+  document.getElementById('stepGroup').style.display='none'; document.getElementById('stepRole').style.display='block';
+  document.getElementById('statusText').textContent='选择角色';
+  document.getElementById('selectedGroupDisplay').textContent=myGroup.name;
   renderRoles();
 }
-
 function renderRoles() {
   const grid = document.getElementById('roleGrid');
-  if (!myGroup || !myGroup.roles) {
-    grid.innerHTML = `<div class="empty-state"><div class="icon">🎭</div><div class="text">该小组暂未设置角色</div></div>`;
-    return;
-  }
-
-  grid.innerHTML = myGroup.roles.map(r => `
-    <div class="role-card ${r.occupied ? 'occupied' : ''}" onclick="selectRole(${r.id})">
-      <div class="role-name">${escapeHtml(r.name)}</div>
-      <div class="role-status">${r.occupied ? '已被选择' : '可选'}</div>
-    </div>
-  `).join('');
+  if(!myGroup||!myGroup.roles){grid.innerHTML='<div class="empty-state"><div class="icon">🎭</div><div class="text">暂无角色</div></div>';return;}
+  grid.innerHTML=myGroup.roles.map(r=>'<div class="role-card '+(r.occupied?'occupied':'')+'" onclick="selectRole('+r.id+')"><div class="role-name">'+escapeHtml(r.name)+'</div><div class="role-status">'+(r.occupied?'已被选':'可选')+'</div></div>').join('');
 }
-
-function selectRole(roleId) {
-  const role = myGroup.roles.find(r => r.id === roleId);
-  if (!role || role.occupied) return;
-
-  socket.emit('participant:select_role', {
-    code: sessionCode,
-    groupId: myGroup.id,
-    roleId,
-    name: myName
-  });
-}
-
+function selectRole(rid){const r=myGroup.roles.find(x=>x.id===rid);if(!r||r.occupied)return;socket.emit('participant:select_role',{code:sessionCode,groupId:myGroup.id,roleId:rid,name:myName});}
 function enterScriptView() {
-  document.getElementById('stepCode').style.display = 'none';
-  document.getElementById('stepGroup').style.display = 'none';
-  document.getElementById('stepRole').style.display = 'none';
-  document.getElementById('stepScript').style.display = 'block';
-  document.getElementById('statusText').textContent = '剧本进行中';
-
-  document.getElementById('myRoleDisplay').textContent = myRole.name;
-  document.getElementById('myGroupDisplay').textContent = myGroup.name;
-  // 设置角色颜色
-  const roleColor = getRoleColor(myRole.name);
-  document.getElementById('roleIndicator').style.background = roleColor;
-  document.getElementById('myRoleDisplay').style.color = roleColor;
-
+  ['stepCode','stepGroup','stepRole'].forEach(id=>document.getElementById(id).style.display='none');
+  document.getElementById('stepScript').style.display='block';
+  document.getElementById('statusText').textContent='剧本进行中';
+  document.getElementById('myRoleDisplay').textContent=myRole.name;
+  document.getElementById('myGroupDisplay').textContent=myGroup.name;
+  const rc=getRoleColor(myRole.name);
+  document.getElementById('roleIndicator').style.background=rc;
+  document.getElementById('myRoleDisplay').style.color=rc;
+  currentViewingScene = 0;
   renderScripts();
 }
 
+// ==================== 横向场景导航 ====================
+function prevScene() { if(currentViewingScene>0){currentViewingScene--;renderCurrentScene();} }
+function nextScene() {
+  const ss=sessionData.session&&sessionData.session.pushedScenes;
+  if(ss&currentViewingScene<ss.length-1){currentViewingScene++;renderCurrentScene();}
+}
+
+// ==================== 渲染 ====================
 function renderScripts() {
-  const waitingRoom = document.getElementById('waitingRoom');
-  const scriptContent = document.getElementById('scriptContent');
-  const badge = document.getElementById('sceneStatusBadge');
-  const scenes = sessionData.session && sessionData.session.pushedScenes;
-  const currentScene = sessionData.session ? sessionData.session.currentScene : 0;
+  const wr=document.getElementById('waitingRoom');const sc=document.getElementById('scriptContent');
+  const badge=document.getElementById('sceneStatusBadge');const ss=sessionData.session&&sessionData.session.pushedScenes;
+  const cs=sessionData.session?sessionData.session.currentScene:0;
 
   // 进度条
-  if (scenes && scenes.length > 0) {
-    const bar = document.getElementById('progressBarContainer');
-    bar.style.display = 'block';
-    document.getElementById('progressBar').innerHTML = scenes.map((s, i) => {
-      const num = i + 1;
-      const isActive = num === currentScene;
-      const isDone = num <= currentScene;
-      let cls = 'progress-dot';
-      if (isActive) cls += ' active';
-      else if (isDone) cls += ' done';
-      const lineCls = i < scenes.length - 1 ? (num <= currentScene ? 'progress-line done' : 'progress-line') : '';
-      return `<div class="${cls}"></div>${i < scenes.length - 1 ? `<div class="${lineCls}"></div>` : ''}`;
-    }).join('');
+  if(ss&&ss.length>0){
+    const bar=document.getElementById('progressBarContainer');bar.style.display='block';
+    document.getElementById('progressBar').innerHTML=ss.map((s,i)=>{const n=i+1;const active=n===cs;const done=n<=cs;let cls='progress-dot';if(active)cls+=' active';else if(done)cls+=' done';const lc=i<ss.length-1?(n<=cs?'progress-line done':'progress-line'):'';return '<div class="'+cls+'"></div>'+(i<ss.length-1?'<div class="'+lc+'"></div>':'');}).join('');
   }
 
-  if (!scenes || scenes.length === 0 || currentScene === 0) {
-    waitingRoom.style.display = 'block';
-    scriptContent.style.display = 'none';
-    badge.textContent = '等待推送';
-    badge.className = 'badge badge-gold';
-    return;
+  if(!ss||!ss.length||cs===0){
+    wr.style.display='block';sc.style.display='none';badge.textContent='等待推送';badge.className='badge badge-gold';return;
   }
+  wr.style.display='none';sc.style.display='block';
+  badge.textContent='第'+cs+'幕';badge.className='badge badge-green';
+  renderCurrentScene();
+}
 
-  waitingRoom.style.display = 'none';
-  scriptContent.style.display = 'block';
-  badge.textContent = `第 ${currentScene} 幕`;
-  badge.className = 'badge badge-green';
+function renderCurrentScene() {
+  const ss=sessionData.session&&sessionData.session.pushedScenes;
+  if(!ss||!ss.length) return;
+  const s=ss[currentViewingScene]; if(!s) return;
+  const total=ss.length;
+  document.getElementById('sceneCounter').textContent='第 '+(currentViewingScene+1)+' 幕 / 共 '+total+' 幕';
+  document.getElementById('prevSceneBtn').style.visibility=currentViewingScene>0?'visible':'hidden';
+  document.getElementById('nextSceneBtn').style.visibility=currentViewingScene<total-1?'visible':'hidden';
 
-  scriptContent.innerHTML = scenes.map(s => {
-    // 检查是否有当前角色的专属内容
-    let roleSpecificHtml = '';
-    if (s.role_content && myRole) {
-      const roleText = s.role_content[myRole.id];
-      if (roleText && roleText.trim()) {
-        roleSpecificHtml = `
-          <div class="role-script" style="margin-top:16px;padding-top:16px;border-top:1px solid rgba(255,107,107,0.2)">
-            <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:8px;letter-spacing:1px">🎭 你的角色剧本</div>
-            <div style="font-size:14px;line-height:1.8;color:var(--text-primary);white-space:pre-wrap">${escapeHtml(roleText)}</div>
-          </div>`;
-      }
+  // 角色颜色
+  const roleClass=myRole?'role-'+({周岚:'zhou',林澈:'lin',阿宁:'a',许岩:'xu',许言:'xu'}[myRole.name]||'default'):'role-default';
+
+  // 角色专属内容
+  let roleHtml='';
+  if(s.role_content&&myRole){
+    const rt=s.role_content[myRole.id];
+    if(rt&&rt.trim()){
+      const rc=getRoleColor(myRole.name);
+      roleHtml='<div class="role-script-block"><div class="role-script-label" style="color:'+rc+'">🎭 你的专属剧本</div><div class="scene-content" style="font-size:14px;color:var(--text-primary);white-space:pre-wrap">'+escapeHtml(rt)+'</div></div>';
     }
-    return `
-      <div class="scene" style="${s.scene_number === currentScene ? 'animation-delay:0s' : 'animation-delay:0.1s'}">
-        <div class="scene-number">第 ${s.scene_number} 幕 ${s.scene_number === currentScene ? '· 最新' : ''}</div>
-        <div class="scene-title">${escapeHtml(s.title)}</div>
-        <div class="scene-content">${escapeHtml(s.content)}</div>
-        ${roleSpecificHtml}
-      </div>
-    `;
-  }).join('');
+  }
+
+  // 对话高亮（按角色染色）
+  let displayContent = s.content;
+  if(myRole) {
+    const names = ['周岚','林澈','阿宁','许言','许岩'];
+    names.forEach(name => {
+      const color = getRoleColor(name);
+      const regex = new RegExp('\\*\\*'+name+'\\*\\*', 'g');
+      displayContent = displayContent.replace(regex, '**<span style="color:'+color+';font-weight:700">'+name+'</span>**');
+    });
+  }
+
+  const card=document.getElementById('sceneCard');
+  card.className='scene '+roleClass;
+  card.style.animation='fadeInUp 0.3s ease forwards';
+  card.innerHTML='<div class="scene-number">第 '+s.scene_number+' 幕'+(currentViewingScene===ss.length-1?' · 最新':'')+'</div><div class="scene-title">'+escapeHtml(s.title)+'</div><div class="scene-content" style="font-size:14px;white-space:pre-wrap">'+displayContent+'</div>'+roleHtml;
 }
 
 // ==================== 返回 ====================
-function backToCode() {
-  document.getElementById('stepCode').style.display = 'block';
-  document.getElementById('stepGroup').style.display = 'none';
-  document.getElementById('stepRole').style.display = 'none';
-  document.getElementById('stepScript').style.display = 'none';
-  document.getElementById('statusText').textContent = '输入场次码加入';
-}
-
-function backToGroup() {
-  document.getElementById('stepGroup').style.display = 'block';
-  document.getElementById('stepRole').style.display = 'none';
-  document.getElementById('statusText').textContent = '选择小组';
-}
+function backToCode(){['stepCode','stepGroup','stepRole','stepScript'].forEach((id,i)=>document.getElementById(id).style.display=i===0?'block':'none');document.getElementById('statusText').textContent='输入场次码加入';}
+function backToGroup(){document.getElementById('stepGroup').style.display='block';document.getElementById('stepRole').style.display='none';document.getElementById('statusText').textContent='选择小组';}
 
 // ==================== 工具 ====================
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
+function escapeHtml(str){const d=document.createElement('div');d.textContent=str;return d.innerHTML;}
 
-// ==================== 尝试恢复上次连接 ====================
-(function tryRestore() {
-  try {
-    const saved = JSON.parse(localStorage.getItem('salon_session'));
-    if (saved && saved.code && saved.name) {
-      document.getElementById('codeInput').value = saved.code;
-      document.getElementById('nameInput').value = saved.name;
-    }
-  } catch (e) {}
-})();
+// 恢复上次连接
+(function(){try{const s=JSON.parse(localStorage.getItem('salon_session'));if(s&&s.code&&s.name){document.getElementById('codeInput').value=s.code;document.getElementById('nameInput').value=s.name;}}catch(e){}})();

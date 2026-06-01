@@ -1,616 +1,280 @@
-// ==================== 讲师端控制逻辑 ====================
+// ==================== 讲师端 ====================
 let sessionCode = null;
-let sessionData = {
-  session: null,
-  groups: [],
-  scenes: [],
-  participants: []
-};
+let sessionData = { session: null, groups: [], scenes: [], participants: [] };
 
-// 角色颜色映射
-const ROLE_COLORS = {
-  '周岚': '#B85C3A',
-  '林澈': '#E8923A',
-  '阿宁': '#3A9E7A',
-  '许岩': '#5A8AB5',
-  '许言': '#5A8AB5'
-};
-function getRoleColor(name) { return ROLE_COLORS[name] || '#9A8A7A'; }
-function getRoleClass(name) {
-  const map = { '周岚':'zhou','林澈':'lin','阿宁':'a','许岩':'xu','许言':'xu' };
-  return map[name] || '';
+const ROLE_COLORS = { '周岚':'#B85C3A','林澈':'#E8923A','阿宁':'#3A9E7A','许岩':'#5A8AB5','许言':'#5A8AB5' };
+const ROLE_CLASS = { '周岚':'zhou','林澈':'lin','阿宁':'a','许岩':'xu','许言':'xu' };
+function getRoleColor(n) { return ROLE_COLORS[n]||'#9A8A7A'; }
+
+// ==================== 密码验证 ====================
+(function checkPassword() {
+  const pwd = localStorage.getItem('lecturer_pwd') || '123456';
+  if (sessionStorage.getItem('lecturer_verified') === 'true') return;
+  const div = document.createElement('div');
+  div.className = 'modal-overlay';
+  div.id = 'pwdModal';
+  div.innerHTML = `<div class="modal-box">
+    <div class="modal-title">🔒 讲师验证</div>
+    <div class="modal-desc">请输入密码进入控制台</div>
+    <div class="input-group"><input class="input" id="pwdInput" type="password" inputmode="numeric" placeholder="密码" maxlength="20" autofocus></div>
+    <button class="btn btn-primary" id="pwdBtn" style="width:100%;margin:0">验证</button>
+    <div style="text-align:center;margin-top:12px"><a href="/participant.html" style="color:var(--text-muted);font-size:13px">我是学员，点此进入</a></div>
+  </div>`;
+  document.body.appendChild(div);
+  document.getElementById('pwdBtn').onclick = function() {
+    const input = document.getElementById('pwdInput').value;
+    if (input === pwd) {
+      sessionStorage.setItem('lecturer_verified', 'true');
+      div.remove();
+    } else {
+      toast('密码错误', 'error');
+    }
+  };
+  setTimeout(() => { const i = document.getElementById('pwdInput'); if(i) i.focus(); }, 300);
+})();
+
+// ==================== 底部导航 ====================
+document.querySelectorAll('#tabBar .tab').forEach(tab => {
+  tab.addEventListener('click', function() {
+    document.querySelectorAll('#tabBar .tab').forEach(t => t.classList.remove('active'));
+    this.classList.add('active');
+    document.querySelectorAll('.tab-content').forEach(tc => tc.style.display = 'none');
+    document.getElementById(this.dataset.tab).style.display = 'block';
+  });
+});
+function switchTab(name) {
+  document.querySelectorAll('#tabBar .tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`#tabBar .tab[data-tab="${name}"]`).classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(tc => tc.style.display = 'none');
+  document.getElementById(name).style.display = 'block';
 }
 
 // ==================== 创建场次 ====================
-async function createPresetSession() {
-  const btn = document.querySelector('#stepCreate .btn-secondary');
-  const origText = btn.textContent;
-  btn.textContent = '正在创建...';
-  btn.disabled = true;
-
-  try {
-    const res = await fetch('/api/preset/salon-621', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.message || '创建失败');
-
-    sessionCode = data.session.code;
-    sessionData.session = { code: sessionCode, id: data.session.id, title: data.session.title, current_scene: 0 };
-
-    socket.emit('instructor:join', sessionCode);
-
-    document.getElementById('stepCreate').style.display = 'none';
-    document.getElementById('contentArea').style.display = 'block';
-    document.getElementById('codeSection').style.display = 'block';
-    document.getElementById('sessionCode').textContent = sessionCode;
-    document.getElementById('pageTitle').textContent = '喙语621号店 · 沉浸式沟通沙龙';
-    document.getElementById('pageSubtitle').textContent = `场次码: ${sessionCode}`;
-    document.getElementById('headerActions').style.display = 'flex';
-
-    toggleStep('stepGroups');
-    toast('🎭 预设沙龙创建成功！', 'success');
-  } catch (err) {
-    toast(err.message || '创建失败', 'error');
-  } finally {
-    btn.textContent = origText;
-    btn.disabled = false;
-  }
-}
-
 async function createSession() {
   const title = document.getElementById('sessionTitle').value.trim() || '沟通沙龙';
-  const btn = document.querySelector('#stepCreate .btn');
-  btn.textContent = '正在创建...';
-  btn.disabled = true;
-
+  const btn = document.querySelector('#tabSession .btn-primary');
+  btn.textContent='创建中...'; btn.disabled=true;
   try {
-    const res = await fetch('/api/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title })
-    });
-    const data = await res.json();
-    if (!data.success) throw new Error(data.message || '创建失败');
-
-    sessionCode = data.session.code;
-    sessionData.session = data.session;
-
-    // 加入 socket 房间
-    socket.emit('instructor:join', sessionCode);
-
-    // UI 切换
-    document.getElementById('stepCreate').style.display = 'none';
-    document.getElementById('contentArea').style.display = 'block';
-    document.getElementById('codeSection').style.display = 'block';
-    document.getElementById('sessionCode').textContent = sessionCode;
-    document.getElementById('pageTitle').textContent = title;
-    document.getElementById('pageSubtitle').textContent = `场次码: ${sessionCode}`;
-    document.getElementById('headerActions').style.display = 'flex';
-
-    // 默认展开第 1 步
-    toggleStep('stepGroups');
-
-    toast('场次创建成功！', 'success');
-  } catch (err) {
-    toast(err.message || '创建失败', 'error');
-  } finally {
-    btn.textContent = '创建场次';
-    btn.disabled = false;
-  }
+    const r = await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})});
+    const d = await r.json();
+    if(!d.success) throw new Error(d.message);
+    afterCreate(d.session);
+  }catch(e){toast(e.message,'error')}
+  finally{btn.textContent='创建场次';btn.disabled=false}
 }
 
-// ==================== 步骤折叠 ====================
-function toggleStep(id) {
-  const step = document.getElementById(id);
-  if (!step) return;
-  const isActive = step.classList.contains('active');
-  // 关闭所有
-  document.querySelectorAll('#stepsList .step').forEach(s => s.classList.remove('active'));
-  if (!isActive) {
-    step.classList.add('active');
-  }
+async function createPresetSession() {
+  const btn = document.querySelector('#tabSession .btn-secondary');
+  btn.textContent='创建中...'; btn.disabled=true;
+  try {
+    const r = await fetch('/api/preset/salon-621',{method:'POST'});
+    const d = await r.json();
+    if(!d.success) throw new Error(d.message);
+    afterCreate(d.session);
+  }catch(e){toast(e.message,'error')}
+  finally{btn.textContent='☕ 一键创建「621号店」';btn.disabled=false}
+}
+
+function afterCreate(session) {
+  sessionCode = session.code;
+  sessionData.session = { code:sessionCode, id:session.id, title:session.title, current_scene:0 };
+  socket.emit('instructor:join', sessionCode);
+  document.getElementById('codeBanner').style.display='block';
+  document.getElementById('sessionCode').textContent=sessionCode;
+  document.getElementById('pageTitle').textContent=session.title;
+  document.getElementById('pageSubtitle').textContent='场次码: '+sessionCode;
+  document.getElementById('headerActions').style.display='block';
+  document.getElementById('tabBar').style.display='flex';
+  document.getElementById('sessionInfo').style.display='block';
+  document.getElementById('noSessionHint').style.display='none';
+  document.getElementById('settingsCode').textContent=sessionCode;
+  document.getElementById('pageTitle').textContent='☕ '+session.title;
+  switchTab('tabSession');
+  toast('场次创建成功！','success');
 }
 
 // ==================== Socket 事件 ====================
 socket.on('instructor:init', (data) => {
-  sessionData.groups = data.groups || [];
-  sessionData.scenes = data.scenes || [];
-  sessionData.participants = data.participants || [];
+  sessionData.groups=data.groups||[]; sessionData.scenes=data.scenes||[]; sessionData.participants=data.participants||[];
   renderAll();
 });
-
 socket.on('session_updated', (data) => {
-  if (data.groups) {
-    // 重新获取完整数据
-    fetchFullData();
-  }
-  if (data.roles) {
-    // 更新特定组的角色
-    const groupId = data.roles.groupId;
-    const group = sessionData.groups.find(g => g.id === groupId);
-    if (group) group.roles = data.roles.roles;
-    renderRoles();
-  }
-  if (data.scenes) {
-    sessionData.scenes = data.scenes;
-    renderScenes();
-    renderSceneControls();
-  }
+  if(data.groups) fetchFullData();
+  if(data.roles){const g=sessionData.groups.find(g=>g.id===data.roles.groupId);if(g)g.roles=data.roles.roles;renderRoles();}
+  if(data.scenes){sessionData.scenes=data.scenes;renderScenes();renderSceneControls();}
 });
+socket.on('participants_updated',(d)=>{sessionData.participants=d.participants;renderParticipants();renderSceneControls();});
+socket.on('scene:pushed',(d)=>{sessionData.session.current_scene=d.currentScene;renderSceneControls();});
+socket.on('session:ended',()=>{toast('场次已结束','info');resetView();});
 
-socket.on('participants_updated', (data) => {
-  sessionData.participants = data.participants;
-  renderParticipants();
-  renderSceneControls();
-});
-
-socket.on('scene:pushed', (data) => {
-  sessionData.session.current_scene = data.currentScene;
-  renderSceneControls();
-});
-
-socket.on('session:ended', () => {
-  toast('场次已结束', 'info');
-  document.getElementById('contentArea').style.display = 'none';
-  document.getElementById('codeSection').style.display = 'none';
-  document.getElementById('pageSubtitle').textContent = '场次已结束';
-});
-
-// ==================== 获取完整数据 ====================
 async function fetchFullData() {
-  if (!sessionCode) return;
-  try {
-    const res = await fetch(`/api/session/${sessionCode}/full`);
-    const data = await res.json();
-    if (data.success) {
-      sessionData.groups = data.groups || [];
-      sessionData.scenes = data.scenes || [];
-      sessionData.participants = data.participants || [];
-      renderAll();
-    }
-  } catch (err) {
-    console.error('获取数据失败:', err);
-  }
+  if(!sessionCode)return;
+  try{const r=await fetch('/api/session/'+sessionCode+'/full');const d=await r.json();if(d.success){sessionData.groups=d.groups||[];sessionData.scenes=d.scenes||[];sessionData.participants=d.participants||[];renderAll();}}catch(e){}
 }
 
-// ==================== 添加小组 ====================
+// ==================== 小组/角色管理 ====================
 async function addGroup() {
-  const input = document.getElementById('groupInput');
-  const name = input.value.trim();
-  if (!name) { toast('请输入小组名称', 'error'); return; }
-
-  try {
-    const res = await fetch(`/api/session/${sessionCode}/group`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
-    });
-    const data = await res.json();
-    if (data.success) {
-      input.value = '';
-      toast('小组已添加', 'success');
-    }
-  } catch (err) {
-    toast('添加失败', 'error');
-  }
+  const n=document.getElementById('groupInput').value.trim(); if(!n){toast('请输入名称','error');return;}
+  try{const r=await fetch('/api/session/'+sessionCode+'/group',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})});const d=await r.json();if(d.success){document.getElementById('groupInput').value='';toast('已添加','success');}}catch(e){toast('添加失败','error')}
 }
-
-// ==================== 删除小组 ====================
-async function deleteGroup(groupId) {
-  if (!confirm('确定删除该小组及其所有角色？')) return;
-  try {
-    await fetch(`/api/session/${sessionCode}/group/${groupId}`, { method: 'DELETE' });
-    toast('已删除', 'info');
-  } catch (err) {
-    toast('删除失败', 'error');
-  }
+async function deleteGroup(id){if(!confirm('确定删除？'))return;try{await fetch('/api/session/'+sessionCode+'/group/'+id,{method:'DELETE'});toast('已删除','info');}catch(e){}}
+async function addRole(gid){const n=document.getElementById('roleInput_'+gid).value.trim();if(!n){toast('请输入角色名称','error');return;}
+  try{const r=await fetch('/api/session/'+sessionCode+'/role',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({groupId:gid,name:n})});const d=await r.json();if(d.success){document.getElementById('roleInput_'+gid).value='';toast('已添加','success');}}catch(e){toast('添加失败','error')}
 }
+async function deleteRole(rid){if(!confirm('确定删除？'))return;try{await fetch('/api/session/'+sessionCode+'/role/'+rid,{method:'DELETE'});toast('已删除','info');}catch(e){}}
 
-// ==================== 添加角色 ====================
-async function addRole(groupId) {
-  const input = document.getElementById(`roleInput_${groupId}`);
-  const descInput = document.getElementById(`roleDesc_${groupId}`);
-  const name = input.value.trim();
-  if (!name) { toast('请输入角色名称', 'error'); return; }
-
-  try {
-    const res = await fetch(`/api/session/${sessionCode}/role`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        groupId,
-        name,
-        description: descInput ? descInput.value.trim() : ''
-      })
-    });
-    const data = await res.json();
-    if (data.success) {
-      input.value = '';
-      if (descInput) descInput.value = '';
-      toast('角色已添加', 'success');
-    }
-  } catch (err) {
-    toast('添加失败', 'error');
-  }
-}
-
-// ==================== 删除角色 ====================
-async function deleteRole(roleId) {
-  if (!confirm('确定删除该角色？')) return;
-  try {
-    await fetch(`/api/session/${sessionCode}/role/${roleId}`, { method: 'DELETE' });
-    toast('已删除', 'info');
-  } catch (err) {
-    toast('删除失败', 'error');
-  }
-}
-
-// ==================== 添加剧本 ====================
+// ==================== 剧本管理 ====================
 async function addScene() {
-  const title = document.getElementById('sceneTitle').value.trim();
-  const content = document.getElementById('sceneContent').value.trim();
-  if (!title) { toast('请输入幕次标题', 'error'); return; }
-  if (!content) { toast('请输入剧本内容', 'error'); return; }
-
-  try {
-    const res = await fetch(`/api/session/${sessionCode}/scene`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, content })
-    });
-    const data = await res.json();
-    if (data.success) {
-      document.getElementById('sceneTitle').value = '';
-      document.getElementById('sceneContent').value = '';
-      toast('剧本已添加', 'success');
-    }
-  } catch (err) {
-    toast('添加失败', 'error');
-  }
+  const t=document.getElementById('sceneTitle').value.trim();const c=document.getElementById('sceneContent').value.trim();
+  if(!t||!c){toast('请填写标题和内容','error');return;}
+  try{const r=await fetch('/api/session/'+sessionCode+'/scene',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,content:c})});const d=await r.json();if(d.success){document.getElementById('sceneTitle').value='';document.getElementById('sceneContent').value='';toast('已添加','success');}}catch(e){toast('添加失败','error')}
+}
+async function deleteScene(sid){if(!confirm('确定删除？'))return;try{await fetch('/api/session/'+sessionCode+'/scene/'+sid,{method:'DELETE'});toast('已删除','info');}catch(e){}}
+async function moveScene(sid,dir){
+  try{await fetch('/api/session/'+sessionCode+'/scene/'+sid+'/move',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({direction:dir})});}catch(e){toast('移动失败','error')}
+}
+async function insertAfter(sid){
+  const t=prompt('输入新幕次的标题：'); if(!t)return;
+  const c=prompt('输入新幕次的内容：'); if(!c)return;
+  try{const r=await fetch('/api/session/'+sessionCode+'/scene/insert-after',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({afterSceneId:sid,title:t,content:c})});const d=await r.json();if(d.success)toast('已插入','success');}catch(e){toast('插入失败','error')}
 }
 
-// ==================== 删除剧本 ====================
-async function deleteScene(sceneId) {
-  if (!confirm('确定删除该幕剧本？')) return;
-  try {
-    await fetch(`/api/session/${sessionCode}/scene/${sceneId}`, { method: 'DELETE' });
-    toast('已删除', 'info');
-  } catch (err) {
-    toast('删除失败', 'error');
-  }
+// ==================== 推送控制 ====================
+function pushScene(n){if(!confirm('确定推送第'+n+'幕？'))return;socket.emit('instructor:push_scene',{code:sessionCode,sceneNumber:n});toast('第'+n+'幕已推送','success');}
+function endSession(){if(!confirm('确定结束场次？'))return;socket.emit('instructor:end',sessionCode);}
+function copyCode(){
+  if(navigator.clipboard)navigator.clipboard.writeText(sessionCode).then(()=>toast('已复制','success'));
+  else{const ta=document.createElement('textarea');ta.value=sessionCode;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast('已复制','success');}
 }
 
-// ==================== 推送剧本 ====================
-function pushScene(sceneNumber) {
-  if (!confirm(`确定推送第 ${sceneNumber} 幕？`)) return;
-  socket.emit('instructor:push_scene', { code: sessionCode, sceneNumber });
-  toast(`第 ${sceneNumber} 幕已推送`, 'success');
+// ==================== 编辑弹窗 ====================
+let editingSceneId=null;
+function editScene(sid){
+  const s=sessionData.scenes.find(x=>x.id===sid); if(!s)return;
+  editingSceneId=sid;
+  document.getElementById('editSceneTitle').value=s.title||'';
+  document.getElementById('editSceneContent').value=s.content||'';
+  let html='';
+  (sessionData.groups||[]).forEach(g=>(g.roles||[]).forEach(r=>{
+    const t=(s.role_content&&s.role_content[r.id])||'';
+    html+=`<div style="margin-bottom:10px;padding:10px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid var(--divider)">
+      <label style="font-size:12px;font-weight:600;color:${getRoleColor(r.name)};display:block;margin-bottom:4px">🎭 ${g.name} · ${r.name}</label>
+      <textarea class="input" id="editRoleContent_${r.id}" rows="3" style="font-size:13px">${escapeHtml(t)}</textarea></div>`;
+  }));
+  document.getElementById('editRoleContentList').innerHTML=html;
+  document.getElementById('editSceneModal').style.display='flex';
+}
+function closeEditScene(){document.getElementById('editSceneModal').style.display='none';editingSceneId=null;}
+async function saveEditScene(){
+  if(!editingSceneId)return;
+  const t=document.getElementById('editSceneTitle').value.trim();const c=document.getElementById('editSceneContent').value.trim();
+  if(!t||!c){toast('请填写完整','error');return;}
+  const rc={};(sessionData.groups||[]).forEach(g=>(g.roles||[]).forEach(r=>{
+    const ta=document.getElementById('editRoleContent_'+r.id);if(ta&&ta.value.trim())rc[r.id]=ta.value.trim();
+  }));
+  try{const r=await fetch('/api/session/'+sessionCode+'/scene/'+editingSceneId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,content:c,roleContent:rc})});const d=await r.json();if(d.success){toast('已保存','success');closeEditScene();}}catch(e){toast('保存失败','error')}
 }
 
-// ==================== 结束场次 ====================
-function endSession() {
-  if (!confirm('确定结束场次？所有学员将收到结束通知。')) return;
-  socket.emit('instructor:end', sessionCode);
+// ==================== 设置 ====================
+function changePassword(){
+  const p=document.getElementById('newPwdInput').value.trim();
+  if(!p||p.length<4){toast('密码至少4位','error');return;}
+  localStorage.setItem('lecturer_pwd',p);
+  toast('密码已修改','success');
+  document.getElementById('newPwdInput').value='';
 }
 
-// ==================== 复制场次码 ====================
-function copyCode() {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(sessionCode).then(() => {
-      toast('场次码已复制', 'success');
-    });
-  } else {
-    // Fallback
-    const ta = document.createElement('textarea');
-    ta.value = sessionCode;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    ta.remove();
-    toast('场次码已复制', 'success');
-  }
+function resetView(){
+  sessionCode=null;sessionData={session:null,groups:[],scenes:[],participants:[]};
+  document.getElementById('codeBanner').style.display='none';
+  document.getElementById('sessionInfo').style.display='none';
+  document.getElementById('noSessionHint').style.display='block';
+  document.getElementById('tabBar').style.display='none';
+  document.getElementById('headerActions').style.display='none';
+  document.getElementById('pageTitle').textContent='☕ 讲师控制台';
+  document.getElementById('pageSubtitle').textContent='管理你的场次';
 }
 
 // ==================== 渲染 ====================
+function renderAll(){renderGroups();renderRoles();renderScenes();renderParticipants();renderSceneControls();}
 
-function renderAll() {
-  renderGroups();
-  renderRoles();
-  renderScenes();
-  renderParticipants();
-  renderSceneControls();
+function renderGroups(){
+  const gs=sessionData.groups||[];
+  document.getElementById('groupEmpty').style.display=gs.length?'none':'block';
+  document.getElementById('groupList').innerHTML=gs.map(g=>`<div class="list-item"><div class="list-item-label"><span>👥</span><span>${escapeHtml(g.name)}</span><span class="badge">${(g.roles||[]).length}角色</span></div><button class="btn btn-ghost btn-sm" onclick="deleteGroup(${g.id})" style="color:var(--error)">删除</button></div>`).join('');
 }
 
-function renderGroups() {
-  const container = document.getElementById('groupList');
-  const empty = document.getElementById('groupEmpty');
-  const groups = sessionData.groups;
-
-  if (!groups || groups.length === 0) {
-    container.innerHTML = '';
-    empty.style.display = 'block';
-    // 标记步骤为未完成
-    document.getElementById('stepGroups').classList.remove('done');
-    return;
-  }
-
-  empty.style.display = 'none';
-  document.getElementById('stepGroups').classList.add('done');
-
-  container.innerHTML = groups.map(g => `
-    <div class="list-item">
-      <div class="list-item-label">
-        <span style="font-size:18px">👥</span>
-        <span>${escapeHtml(g.name)}</span>
-        <span class="badge">${(g.roles || []).length} 角色</span>
-      </div>
-      <button class="btn btn-ghost btn-sm" onclick="deleteGroup(${g.id})" style="color:var(--accent)">删除</button>
-    </div>
-  `).join('');
-}
-
-function renderRoles() {
-  const container = document.getElementById('rolesContent');
-  const groups = sessionData.groups;
-
-  if (!groups || groups.length === 0) {
-    container.innerHTML = `
-      <div class="empty-state">
-        <div class="icon">👥</div>
-        <div class="text">请先在「小组管理」中添加小组</div>
-      </div>`;
-    return;
-  }
-
-  let hasRoles = false;
-  container.innerHTML = groups.map(g => {
-    const roles = g.roles || [];
-    if (roles.length > 0) hasRoles = true;
-    return `
-      <div class="card" style="margin-bottom:12px">
-        <div class="card-header">
-          <div class="card-title">${escapeHtml(g.name)}</div>
-          <span class="badge">${roles.length} 角色</span>
-        </div>
-        <div class="inline-form">
-          <input class="input" id="roleInput_${g.id}" placeholder="角色名称" maxlength="20" style="font-size:14px">
-          <button class="btn btn-primary btn-sm" onclick="addRole(${g.id})">添加</button>
-        </div>
-        ${roles.length > 0 ? `
-          <div class="list">
-            ${roles.map(r => `
-              <div class="list-item">
-                <div class="list-item-label">
-                  <span>🎭</span>
-                  <span>${escapeHtml(r.name)}</span>
-                  ${r.description ? `<span style="font-size:12px;color:var(--text-muted)">${escapeHtml(r.description)}</span>` : ''}
-                </div>
-                <button class="btn btn-ghost btn-sm" onclick="deleteRole(${r.id})" style="color:var(--text-muted)">✕</button>
-              </div>
-            `).join('')}
-          </div>
-        ` : `
-          <div style="font-size:13px;color:var(--text-muted);text-align:center;padding:8px">暂无角色</div>
-        `}
-      </div>
-    `;
+function renderRoles(){
+  const gs=sessionData.groups||[];
+  if(!gs.length){document.getElementById('rolesContent').innerHTML='<div class="empty-state" style="padding:12px"><div class="text">请先添加小组</div></div>';return;}
+  document.getElementById('rolesContent').innerHTML=gs.map(g=>{
+    const rs=g.roles||[];
+    return `<div style="margin-bottom:10px;padding:12px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid var(--divider)">
+      <div style="font-size:13px;font-weight:600;margin-bottom:6px">${escapeHtml(g.name)} <span class="badge">${rs.length}</span></div>
+      <div class="inline-form"><input class="input" id="roleInput_${g.id}" placeholder="角色名称" maxlength="20" style="font-size:13px"><button class="btn btn-primary btn-sm" onclick="addRole(${g.id})">添加</button></div>
+      ${rs.length?`<div class="list">${rs.map(r=>`<div class="list-item"><div class="list-item-label"><span style="color:${getRoleColor(r.name)}">◆</span><span>${escapeHtml(r.name)}</span></div><button class="btn btn-ghost btn-sm" onclick="deleteRole(${r.id})" style="color:var(--text-muted)">✕</button></div>`).join('')}</div>`:'<div style="font-size:12px;color:var(--text-muted);padding:4px 0">暂无角色</div>'}
+    </div>`;
   }).join('');
-
-  if (hasRoles) {
-    document.getElementById('stepRoles').classList.add('done');
-  } else {
-    document.getElementById('stepRoles').classList.remove('done');
-  }
 }
 
-let editingSceneId = null;
-
-function editScene(sceneId) {
-  const scenes = sessionData.scenes;
-  const scene = scenes.find(s => s.id === sceneId);
-  if (!scene) return;
-  editingSceneId = sceneId;
-  document.getElementById('editSceneTitle').value = scene.title || '';
-  document.getElementById('editSceneContent').value = scene.content || '';
-  // 渲染角色专属内容编辑区
-  const groups = sessionData.groups;
-  let roleHtml = '';
-  if (groups) {
-    groups.forEach(g => {
-      (g.roles || []).forEach(r => {
-        const roleText = (scene.role_content && scene.role_content[r.id]) || '';
-        roleHtml += `
-          <div style="margin-bottom:10px;padding:10px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid var(--border)">
-            <label style="font-size:12px;font-weight:600;color:var(--accent);display:block;margin-bottom:4px">🎭 ${escapeHtml(g.name)} · ${escapeHtml(r.name)} 专属剧本</label>
-            <textarea class="input" id="editRoleContent_${r.id}" rows="3" placeholder="该角色在这一幕的专属内容..." style="font-size:13px">${escapeHtml(roleText)}</textarea>
-          </div>`;
-      });
-    });
-  }
-  document.getElementById('editRoleContentList').innerHTML = roleHtml || '<div style="color:var(--text-muted);font-size:13px;padding:8px">暂无角色数据</div>';
-  // 显示弹窗
-  document.getElementById('editSceneModal').style.display = 'flex';
-}
-
-function closeEditScene() {
-  document.getElementById('editSceneModal').style.display = 'none';
-  editingSceneId = null;
-}
-
-async function saveEditScene() {
-  if (!editingSceneId) return;
-  const title = document.getElementById('editSceneTitle').value.trim();
-  const content = document.getElementById('editSceneContent').value.trim();
-  if (!title) { toast('请输入幕次标题', 'error'); return; }
-  if (!content) { toast('请输入剧本内容', 'error'); return; }
-  // 收集角色专属内容
-  const roleContent = {};
-  const groups = sessionData.groups;
-  if (groups) {
-    groups.forEach(g => {
-      (g.roles || []).forEach(r => {
-        const textarea = document.getElementById(`editRoleContent_${r.id}`);
-        if (textarea && textarea.value.trim()) {
-          roleContent[r.id] = textarea.value.trim();
-        }
-      });
-    });
-  }
-  try {
-    const res = await fetch(`/api/session/${sessionCode}/scene/${editingSceneId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, content, roleContent })
-    });
-    const data = await res.json();
-    if (data.success) {
-      toast('剧本已更新', 'success');
-      closeEditScene();
-    }
-  } catch (err) {
-    toast('保存失败', 'error');
-  }
-}
-
-function renderScenes() {
-  const container = document.getElementById('sceneList');
-  const empty = document.getElementById('sceneEmpty');
-  const scenes = sessionData.scenes;
-
-  if (!scenes || scenes.length === 0) {
-    container.innerHTML = '';
-    empty.style.display = 'block';
-    document.getElementById('stepScenes').classList.remove('done');
-    return;
-  }
-
-  empty.style.display = 'none';
-  document.getElementById('stepScenes').classList.add('done');
-
-  container.innerHTML = scenes.map(s => `
-    <div class="scene" style="animation:none;opacity:1">
+function renderScenes(){
+  const ss=sessionData.scenes||[];
+  document.getElementById('sceneEmpty').style.display=ss.length?'none':'block';
+  if(ss.length) document.getElementById('tabScript').querySelector('.card').style.display='block';
+  document.getElementById('sceneList').innerHTML=ss.map((s,i)=>{
+    const hasRole=s.role_content&&Object.keys(s.role_content).length>0;
+    return `<div class="scene" style="animation:none;opacity:1">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div>
-          <div class="scene-number">第 ${s.scene_number} 幕</div>
-          <div class="scene-title">${escapeHtml(s.title)}</div>
-        </div>
-        <div style="display:flex;gap:4px;flex-shrink:0">
-          <button class="btn btn-ghost btn-sm" onclick="editScene(${s.id})" style="color:var(--blue)">✏️</button>
-          <button class="btn btn-ghost btn-sm" onclick="deleteScene(${s.id})" style="color:var(--text-muted)">✕</button>
+        <div><div class="scene-number">第${s.scene_number}幕</div><div class="scene-title" style="font-size:16px">${escapeHtml(s.title)}</div></div>
+        <div class="scene-order-controls">
+          <button class="scene-order-btn" onclick="moveScene(${s.id},'up')" ${i===0?'disabled style="opacity:0.3"':''}>↑</button>
+          <button class="scene-order-btn" onclick="moveScene(${s.id},'down')" ${i===ss.length-1?'disabled style="opacity:0.3"':''}>↓</button>
+          <button class="scene-order-btn insert" onclick="insertAfter(${s.id})" title="在此后插入">+</button>
         </div>
       </div>
-      <div class="scene-content" style="font-size:14px;max-height:120px;overflow:hidden">${escapeHtml(s.content)}</div>
-      ${s.role_content && Object.keys(s.role_content).length > 0 ? `<div style="font-size:11px;color:var(--gold);margin-top:6px">🎭 含 ${Object.keys(s.role_content).length} 个角色专属内容</div>` : ''}
-      <button class="btn btn-ghost btn-sm" style="margin-top:8px;color:var(--text-muted);font-size:12px" onclick="this.previousElementSibling.previousElementSibling.style.maxHeight='none'">展开全部</button>
-    </div>
-  `).join('');
-}
-
-function renderParticipants() {
-  const container = document.getElementById('participantList');
-  const countEl = document.getElementById('participantCount');
-  const participants = sessionData.participants;
-
-  countEl.textContent = participants ? participants.length : 0;
-
-  if (!participants || participants.length === 0) {
-    container.innerHTML = `
-      <div class="empty-state" style="padding:16px">
-        <div class="icon" style="font-size:24px">👤</div>
-        <div class="text">还没有学员加入</div>
-      </div>`;
-    return;
-  }
-
-  // 按小组分组
-  const byGroup = {};
-  participants.forEach(p => {
-    if (!byGroup[p.group_name]) byGroup[p.group_name] = [];
-    byGroup[p.group_name].push(p);
-  });
-
-  container.innerHTML = Object.keys(byGroup).map(gName => `
-    <div class="participant-group">
-      <div class="participant-group-title">${escapeHtml(gName)}</div>
-      <div class="participant-list">
-        ${byGroup[gName].map(p => `
-          <div class="participant-chip">
-            <span class="dot" style="background:${getRoleColor(p.role_name)}"></span>
-            ${escapeHtml(p.name)}
-            <span class="role-tag" style="color:${getRoleColor(p.role_name)}">· ${escapeHtml(p.role_name)}</span>
-          </div>
-        `).join('')}
+      <div class="scene-content" style="font-size:13px;max-height:80px;overflow:hidden">${escapeHtml(s.content)}</div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn btn-ghost btn-sm" onclick="editScene(${s.id})" style="color:var(--accent-dark)">✏️ 编辑</button>
+        <button class="btn btn-ghost btn-sm" onclick="deleteScene(${s.id})" style="color:var(--error)">🗑 删除</button>
+        ${hasRole?`<span style="font-size:11px;color:var(--success);align-self:center">🎭 含角色内容</span>`:''}
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
 function renderProgressBar(scenes, currentScene) {
-  const container = document.getElementById('progressBarContainer');
-  const bar = document.getElementById('progressBar');
-  if (!container || !bar) return;
-  if (!scenes || scenes.length === 0) { container.style.display = 'none'; return; }
-  container.style.display = 'block';
-  bar.innerHTML = scenes.map(function(s, i) {
-    var num = i + 1;
-    var isActive = num === currentScene;
-    var isDone = num <= currentScene;
-    var cls = 'progress-dot';
-    if (isActive) cls += ' active';
-    else if (isDone) cls += ' done';
-    var lineCls = i < scenes.length - 1 ? (num <= currentScene ? 'progress-line done' : 'progress-line') : '';
-    return '<div class="' + cls + '"></div>' + (i < scenes.length - 1 ? '<div class="' + lineCls + '"></div>' : '');
+  const c=document.getElementById('progressBarContainer');const b=document.getElementById('progressBar');
+  if(!c||!b)return;
+  if(!scenes||!scenes.length){c.style.display='none';return;}
+  c.style.display='block';
+  b.innerHTML=scenes.map((s,i)=>{const n=i+1;const active=n===currentScene;const done=n<=currentScene;let cls='progress-dot';if(active)cls+=' active';else if(done)cls+=' done';const lc=i<scenes.length-1?(n<=currentScene?'progress-line done':'progress-line'):'';return '<div class="'+cls+'"></div>'+(i<scenes.length-1?'<div class="'+lc+'"></div>':'');
   }).join('');
 }
 
-function renderSceneControls() {
-  const container = document.getElementById('sceneControls');
-  const empty = document.getElementById('sceneControlsEmpty');
-  const scenes = sessionData.scenes;
-  const currentScene = sessionData.session ? sessionData.session.current_scene : 0;
-
-  // 渲染进度条
-  renderProgressBar(scenes, currentScene);
-
-  if (!scenes || scenes.length === 0) {
-    container.innerHTML = '';
-    empty.style.display = 'block';
-    return;
-  }
-
-  empty.style.display = 'none';
-
-  container.innerHTML = scenes.map(s => {
-    const isPushed = s.scene_number <= currentScene;
-    const isCurrent = s.scene_number === currentScene;
-    let statusText = '待推送';
-    let statusClass = '';
-    if (isCurrent) {
-      statusText = '当前展示中';
-      statusClass = 'current';
-    } else if (isPushed) {
-      statusText = '已推送';
-      statusClass = 'pushed';
-    }
-
-    return `
-      <button class="scene-btn ${statusClass}" onclick="pushScene(${s.scene_number})" ${isPushed ? 'disabled' : ''}>
-        <div class="scene-btn-num">${s.scene_number}</div>
-        <div class="scene-btn-info">
-          <div class="scene-btn-title">${escapeHtml(s.title)}</div>
-          <div class="scene-btn-status">${statusText}</div>
-        </div>
-        ${!isPushed ? '<span style="color:var(--accent);font-size:13px;font-weight:600">推送 →</span>' : (isCurrent ? '<span style="color:var(--gold);font-size:16px">✦</span>' : '<span style="color:var(--green);font-size:16px">✓</span>')}
-      </button>
-    `;
+function renderSceneControls(){
+  const c=document.getElementById('sceneControls');const e=document.getElementById('sceneControlsEmpty');
+  const ss=sessionData.scenes;const cs=sessionData.session?sessionData.session.current_scene:0;
+  renderProgressBar(ss,cs);
+  if(!ss||!ss.length){c.innerHTML='';e.style.display='block';return;}
+  e.style.display='none';
+  c.innerHTML=ss.map(s=>{
+    const pushed=s.scene_number<=cs;const isCurrent=s.scene_number===cs;
+    let st='待推送',sc='';if(isCurrent){st='展示中';sc='current';}else if(pushed){st='已推送';sc='pushed';}
+    return `<button class="scene-btn ${sc}" onclick="pushScene(${s.scene_number})" ${pushed?'disabled':''}>
+      <div class="scene-btn-num">${s.scene_number}</div>
+      <div class="scene-btn-info"><div class="scene-btn-title">${escapeHtml(s.title)}</div><div class="scene-btn-status">${st}</div></div>
+      ${!pushed?'<span style="color:var(--accent);font-size:13px;font-weight:600">推送 →</span>':(isCurrent?'<span style="color:var(--accent-dark);font-size:16px">✦</span>':'<span style="color:var(--success);font-size:16px">✓</span>')}
+    </button>`;
   }).join('');
+}
+
+function renderParticipants(){
+  const c=document.getElementById('participantList');const ct=document.getElementById('participantCount');
+  const ps=sessionData.participants;ct.textContent=ps?ps.length:0;
+  if(!ps||!ps.length){c.innerHTML='<div class="empty-state" style="padding:12px"><div class="icon" style="font-size:20px">👤</div><div class="text">暂无学员加入</div></div>';return;}
+  const bg={};ps.forEach(p=>{if(!bg[p.group_name])bg[p.group_name]=[];bg[p.group_name].push(p);});
+  c.innerHTML=Object.keys(bg).map(gn=>`<div class="participant-group"><div class="participant-group-title">${escapeHtml(gn)}</div><div class="participant-list">${bg[gn].map(p=>`<div class="participant-chip"><span class="dot" style="background:${getRoleColor(p.role_name)}"></span>${escapeHtml(p.name)}<span class="role-tag" style="color:${getRoleColor(p.role_name)}">· ${escapeHtml(p.role_name)}</span></div>`).join('')}</div></div>`).join('');
 }
 
 // ==================== 工具 ====================
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
+function escapeHtml(str){const d=document.createElement('div');d.textContent=str;return d.innerHTML;}

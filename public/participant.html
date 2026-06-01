@@ -5,11 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#FFFCF5">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/icons/icon.svg">
-  <title>学员入口 · 621号店</title>
+  <title>学员 · 621号店</title>
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
@@ -17,7 +16,7 @@
 <div class="toast-container"></div>
 
 <div class="page" id="app">
-  <div class="page-header">
+  <div class="page-header" style="padding-bottom:8px">
     <div>
       <div class="page-title">☕ 621号店</div>
       <div class="page-subtitle" id="statusText">输入场次码加入</div>
@@ -27,23 +26,20 @@
   <!-- 输入场次码 -->
   <div id="stepCode">
     <div class="card">
-      <div class="input-group">
-        <label class="input-label">场次码</label>
-        <input class="input" id="codeInput" placeholder="输入讲师给你的场次码" maxlength="4" inputmode="numeric" pattern="[0-9]*" style="text-align:center;font-size:24px;font-weight:700;letter-spacing:6px">
+      <div class="input-group"><label class="input-label">场次码</label>
+        <input class="input" id="codeInput" placeholder="4位数字" maxlength="4" inputmode="numeric" style="text-align:center;font-size:24px;font-weight:700;letter-spacing:6px">
       </div>
-      <div class="input-group">
-        <label class="input-label">你的名字</label>
-        <input class="input" id="nameInput" placeholder="输入你的昵称或姓名" maxlength="20">
+      <div class="input-group"><label class="input-label">你的名字</label>
+        <input class="input" id="nameInput" placeholder="昵称或姓名" maxlength="20">
       </div>
-      <button class="btn btn-primary btn-block" onclick="joinSession()" style="margin:0;width:100%">加入场次</button>
+      <button class="btn btn-primary" onclick="joinSession()" style="width:100%;margin:0">加入场次</button>
     </div>
   </div>
 
   <!-- 选择小组 -->
   <div id="stepGroup" style="display:none">
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-header">
-        <div class="card-title">选择你的小组</div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">选择小组</div>
         <button class="btn btn-ghost btn-sm" onclick="backToCode()">返回</button>
       </div>
       <div id="groupSelectList" class="group-select-list"></div>
@@ -52,9 +48,8 @@
 
   <!-- 选择角色 -->
   <div id="stepRole" style="display:none">
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-header">
-        <div class="card-title" id="selectedGroupDisplay">选择角色</div>
+    <div class="card">
+      <div class="card-header"><div class="card-title" id="selectedGroupDisplay">选择角色</div>
         <button class="btn btn-ghost btn-sm" onclick="backToGroup()">返回</button>
       </div>
       <div id="roleGrid" class="role-grid"></div>
@@ -63,30 +58,35 @@
 
   <!-- 剧本阅读 -->
   <div id="stepScript" style="display:none">
-    <!-- 角色信息条 -->
+    <!-- 角色信息 -->
     <div class="participant-info-bar">
       <div class="participant-role-indicator" id="roleIndicator" style="background:var(--divider)"></div>
       <div class="participant-info-text">
         <div class="role-name" id="myRoleDisplay"></div>
         <div class="group-name" id="myGroupDisplay"></div>
       </div>
-      <span id="sceneStatusBadge" class="badge badge-gold">等待推送</span>
+      <span id="sceneStatusBadge" class="badge badge-gold">等待</span>
     </div>
 
     <!-- 进度条 -->
-    <div id="progressBarContainer" style="display:none">
-      <div class="progress-bar" id="progressBar"></div>
-    </div>
+    <div id="progressBarContainer" style="display:none"><div class="progress-bar" id="progressBar"></div></div>
 
-    <!-- 等待状态 -->
+    <!-- 等待 -->
     <div id="waitingRoom" class="waiting-room">
       <div class="icon">☕</div>
-      <div class="title">等待讲师推送剧本</div>
-      <div class="desc">讲师稍后将会逐幕推送剧本<br>请耐心等候</div>
+      <div class="title">等待讲师推送</div>
+      <div class="desc">讲师稍后逐幕推送剧本<br>请耐心等候</div>
     </div>
 
-    <!-- 剧本内容 -->
-    <div id="scriptContent" style="display:none"></div>
+    <!-- 剧情阅读区（单页卡片+导航） -->
+    <div id="scriptContent" style="display:none">
+      <div class="scene-counter" id="sceneCounter"></div>
+      <div id="sceneCard" class="scene"></div>
+      <div class="scene-nav">
+        <button class="btn btn-secondary" id="prevSceneBtn" onclick="prevScene()">← 上一幕</button>
+        <button class="btn btn-primary" id="nextSceneBtn" onclick="nextScene()">下一幕 →</button>
+      </div>
+    </div>
   </div>
 </div>
 
