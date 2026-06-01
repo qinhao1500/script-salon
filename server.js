@@ -47,6 +47,9 @@ db.exec(`
     scene_number INTEGER NOT NULL,
     title TEXT NOT NULL,
     content TEXT NOT NULL,
+    round_type TEXT NOT NULL DEFAULT 'script',
+    full_dialogue TEXT DEFAULT '',
+    task_content TEXT DEFAULT '',
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
   );
 
@@ -57,6 +60,27 @@ db.exec(`
     content TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE,
     FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS hidden_info (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scene_id INTEGER NOT NULL,
+    role_id INTEGER NOT NULL,
+    tier INTEGER NOT NULL CHECK(tier IN (1,2,3)),
+    content TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE,
+    FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS unlock_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    participant_id INTEGER NOT NULL,
+    scene_id INTEGER NOT NULL,
+    tier INTEGER NOT NULL CHECK(tier IN (1,2,3)),
+    unlocked INTEGER NOT NULL DEFAULT 0,
+    unlocked_at DATETIME,
+    FOREIGN KEY (participant_id) REFERENCES participants(id) ON DELETE CASCADE,
+    FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS participants (
@@ -72,6 +96,11 @@ db.exec(`
   );
 `);
 
+// 数据库迁移：为旧表添加新字段（兼容已有数据库）
+try { db.exec("ALTER TABLE scenes ADD COLUMN round_type TEXT NOT NULL DEFAULT 'script'"); } catch(e) {}
+try { db.exec("ALTER TABLE scenes ADD COLUMN full_dialogue TEXT DEFAULT ''"); } catch(e) {}
+try { db.exec("ALTER TABLE scenes ADD COLUMN task_content TEXT DEFAULT ''"); } catch(e) {}
+
 // 预编译语句
 const stmts = {
   createSession: db.prepare('INSERT INTO sessions (code, title) VALUES (?, ?)'),
@@ -82,7 +111,7 @@ const stmts = {
   addRole: db.prepare('INSERT INTO roles (group_id, session_id, name, description) VALUES (?, ?, ?, ?)'),
   getRolesByGroup: db.prepare('SELECT * FROM roles WHERE group_id = ? AND session_id = ?'),
   deleteRole: db.prepare('DELETE FROM roles WHERE id = ? AND session_id = ?'),
-  addScene: db.prepare('INSERT INTO scenes (session_id, scene_number, title, content) VALUES (?, ?, ?, ?)'),
+  addScene: db.prepare('INSERT INTO scenes (session_id, scene_number, title, content, round_type, full_dialogue, task_content) VALUES (?, ?, ?, ?, ?, ?, ?)'),
   getScenes: db.prepare('SELECT * FROM scenes WHERE session_id = ? ORDER BY scene_number'),
   deleteScene: db.prepare('DELETE FROM scenes WHERE id = ? AND session_id = ?'),
   addSceneRoleContent: db.prepare('INSERT OR REPLACE INTO scene_role_content (scene_id, role_id, content) VALUES (?, ?, ?)'),
@@ -96,6 +125,14 @@ const stmts = {
   getMaxSortOrder: db.prepare('SELECT COALESCE(MAX(sort_order), 0) as max FROM groups_t WHERE session_id = ?'),
   getMaxSceneNumber: db.prepare('SELECT COALESCE(MAX(scene_number), 0) as max FROM scenes WHERE session_id = ?'),
   updateSessionStatus: db.prepare('UPDATE sessions SET status = ? WHERE code = ?'),
+  addHiddenInfo: db.prepare('INSERT INTO hidden_info (scene_id, role_id, tier, content) VALUES (?, ?, ?, ?)'),
+  getHiddenInfo: db.prepare('SELECT * FROM hidden_info WHERE scene_id = ? AND role_id = ? ORDER BY tier'),
+  getHiddenInfoByScene: db.prepare('SELECT * FROM hidden_info WHERE scene_id = ? ORDER BY role_id, tier'),
+  deleteHiddenInfo: db.prepare('DELETE FROM hidden_info WHERE scene_id = ?'),
+  addUnlockRecord: db.prepare("INSERT OR REPLACE INTO unlock_records (participant_id, scene_id, tier, unlocked, unlocked_at) VALUES (?, ?, ?, 1, datetime('now'))"),
+  getUnlockRecord: db.prepare('SELECT * FROM unlock_records WHERE participant_id = ? AND scene_id = ? AND tier = ?'),
+  getParticipantUnlocks: db.prepare('SELECT * FROM unlock_records WHERE participant_id = ? AND scene_id = ?'),
+  updateSceneType: db.prepare('UPDATE scenes SET round_type = ?, full_dialogue = ? WHERE id = ?'),
 };
 
 // 生成4位数字场次码
@@ -238,6 +275,96 @@ app.delete('/api/session/:code/role/:roleId', (req, res) => {
   res.json({ success: true });
 });
 
+// ==================== 隐藏信息 API ====================
+
+// 获取角色的隐藏信息（含锁定状态）
+app.get('/api/session/:code/hidden-info/:roleId', (req, res) => {
+  const session = stmts.getSessionByCode.get(req.params.code);
+  if (!session) return res.status(404).json({ success: false, message: '场次不存在' });
+  const sceneNumber = parseInt(req.query.scene) || session.current_scene;
+  const scene = db.prepare('SELECT * FROM scenes WHERE session_id = ? AND scene_number = ?').get(session.id, sceneNumber);
+  if (!scene) return res.json({ success: true, hidden_info: [] });
+  const hiddenInfo = stmts.getHiddenInfo.all(scene.id, parseInt(req.params.roleId));
+  const participant = db.prepare('SELECT * FROM participants WHERE role_id = ? AND session_id = ?').get(parseInt(req.params.roleId), session.id);
+  let unlockStatus = {};
+  if (participant) {
+    const records = stmts.getParticipantUnlocks.all(participant.id, scene.id);
+    records.forEach(r => { unlockStatus[r.tier] = r.unlocked; });
+  }
+  const result = hiddenInfo.map(h => ({...h, unlocked: unlockStatus[h.tier] || false }));
+  res.json({ success: true, hidden_info: result });
+});
+
+// 学员自检解锁
+app.post('/api/session/:code/unlock', (req, res) => {
+  const { roleId, sceneNumber, tier } = req.body;
+  const session = stmts.getSessionByCode.get(req.params.code);
+  if (!session) return res.status(404).json({ success: false, message: '场次不存在' });
+  const scene = db.prepare('SELECT * FROM scenes WHERE session_id = ? AND scene_number = ?').get(session.id, sceneNumber);
+  if (!scene) return res.status(404).json({ success: false, message: '场景不存在' });
+  const participant = db.prepare('SELECT * FROM participants WHERE role_id = ? AND session_id = ?').get(roleId, session.id);
+  if (!participant) return res.status(404).json({ success: false, message: '参与者不存在' });
+  stmts.addUnlockRecord.run(participant.id, scene.id, tier);
+  io.to('session:' + req.params.code).emit('unlock_updated', { roleId, sceneNumber, tier, unlocked: true });
+  res.json({ success: true });
+});
+
+// 讲师全组信息解禁
+app.post('/api/session/:code/unlock-all', (req, res) => {
+  const session = stmts.getSessionByCode.get(req.params.code);
+  if (!session) return res.status(404).json({ success: false, message: '场次不存在' });
+  const participants = stmts.getParticipants.all(session.id);
+  const scenes = stmts.getScenes.all(session.id);
+  const unlockAll = db.transaction(() => {
+    participants.forEach(p => {
+      scenes.forEach(s => {
+        for (let tier = 1; tier <= 3; tier++) {
+          try { stmts.addUnlockRecord.run(p.id, s.id, tier); } catch(e) {}
+        }
+      });
+    });
+  });
+  unlockAll();
+  io.to('session:' + req.params.code).emit('all_unlocked');
+  res.json({ success: true, message: '全部信息已解禁' });
+});
+
+// 讲师紧急解锁
+app.post('/api/session/:code/emergency-unlock', (req, res) => {
+  const { roleId } = req.body;
+  const session = stmts.getSessionByCode.get(req.params.code);
+  if (!session) return res.status(404).json({ success: false, message: '场次不存在' });
+  const participant = db.prepare('SELECT * FROM participants WHERE role_id = ? AND session_id = ?').get(roleId, session.id);
+  if (!participant) return res.status(404).json({ success: false, message: '参与者不存在' });
+  const scenes = stmts.getScenes.all(session.id);
+  scenes.forEach(s => {
+    for (let tier = 1; tier <= 3; tier++) {
+      try { stmts.addUnlockRecord.run(participant.id, s.id, tier); } catch(e) {}
+    }
+  });
+  io.to('session:' + req.params.code).emit('unlock_updated', { roleId, emergency: true });
+  res.json({ success: true, message: '已紧急解锁' });
+});
+
+// 更新场景类型和完整对白
+app.put('/api/session/:code/scene/:sceneId', (req, res) => {
+  const session = stmts.getSessionByCode.get(req.params.code);
+  if (!session) return res.status(404).json({ success: false, message: '场次不存在' });
+  const { round_type, full_dialogue } = req.body;
+  stmts.updateSceneType.run(round_type || 'script', full_dialogue || '', parseInt(req.params.sceneId));
+  if (req.body.hidden_info && Array.isArray(req.body.hidden_info)) {
+    stmts.deleteHiddenInfo.run(parseInt(req.params.sceneId));
+    const insertHidden = db.transaction((items) => {
+      for (const h of items) {
+        stmts.addHiddenInfo.run(parseInt(req.params.sceneId), h.role_id, h.tier, h.content);
+      }
+    });
+    insertHidden(req.body.hidden_info);
+  }
+  res.json({ success: true });
+});
+
+
 // 添加剧本幕次（支持角色专属内容）
 app.post('/api/session/:code/scene', (req, res) => {
   const session = stmts.getSessionByCode.get(req.params.code);
@@ -345,88 +472,63 @@ app.post('/api/session/:code/scene/insert-after', (req, res) => {
 // 一键创建喙语621号店预设沙龙（完整剧本内容）
 app.post('/api/preset/salon-621', (req, res) => {
   const code = generateCode();
-  const title = '喙语621号店 · 沉浸式沟通沙龙';
+  const title = '喙语621号店 · 沟通剧本杀沙龙';
   
   stmts.createSession.run(code, title);
   const session = stmts.getSessionByCode.get(code);
   const sessionId = session.id;
 
-  stmts.addGroup.run(sessionId, '621号店 · 第一组', 1);
+  stmts.addGroup.run(sessionId, '第一组', 1);
   const group = stmts.getGroups.all(sessionId)[0];
   const groupId = group.id;
 
-  // 创建角色（含完整背景故事）
   const roleDefs = [
-    { name: '阿宁', desc: '老员工 · 你见过这家店热闹的时候，也陪它走过现在最吃力的时候。你不是最会做决定的人，但很多决定最后都要落到你这里执行。如果继续，执行必须更清楚；不能再默认总有人会把最后的问题接住。开场白：「很多事不是不能做，是最后都变成临时来。」' },
-    { name: '周岚', desc: '主理人 · 12年的坚守。621号店承载了你很多时间、心力和判断。这些年外面变了很多，但你始终觉得，这家店不能为了「看起来更有效」就轻易变成另一个样子。不反对所有变化，但反对仓促决定。开场白：「我不是不让大家提方案，但这家店不是说改就改的。」' },
-    { name: '林澈', desc: '推动者 · 你不是最早留下来的人，但正因为如此，你更清楚外面的环境已经变了。店不是没有机会，而是错过了太多次该动的时候。店必须动起来；有些尝试不一定完美，但不能一直等。开场白：「现在最大的问题不是有没有想法，而是我们已经拖不起了。」' },
-    { name: '许言', desc: '多年熟客 · 你不天天在店里，但你是少数一直看着它从热闹走到今天的人。你愿意帮，但你也越来越觉得，问题不只是「缺一个活动」或「缺一点资源」。在没有形成一致方向前，盲目推进只会更乱。开场白：「我感觉你们现在不是没意见，是每个人都在说自己的。」' },
+    { name: '周岚', desc: '主理人 · 12年。不反对变化，但反对仓促决定。' },
+    { name: '林澈', desc: '推动者 · 近两年。店必须动起来。' },
+    { name: '阿宁', desc: '老员工 · 4年。很多事不是不能做，是最后都变成临时来。' },
+    { name: '许言', desc: '本地撰稿人 · 5年前写过一篇报道。外部资源解决不了内部问题。' },
   ];
-  const roleIds = {};
   roleDefs.forEach(r => { stmts.addRole.run(groupId, sessionId, r.name, r.desc); });
   const roles = stmts.getRolesByGroup.all(groupId, sessionId);
+  const roleIds = {};
   roles.forEach(r => { roleIds[r.name] = r.id; });
 
-  // 创建4幕完整剧本（含角色专属内容）
-  const insertSceneWithRoles = db.transaction((sessionId, sceneNum, title, content, roleContentMap) => {
-    const r = stmts.addScene.run(sessionId, sceneNum, title, content);
+  const insertScene = db.transaction((snum, title, content, roundType, fullDialogue, taskContent, roleContentMap) => {
+    const r = stmts.addScene.run(sessionId, snum, title, content, roundType||'script', fullDialogue||'', taskContent||'');
     const sceneId = r.lastInsertRowid;
     if (roleContentMap) {
       for (const [roleName, text] of Object.entries(roleContentMap)) {
-        if (text && text.trim() && roleIds[roleName]) {
-          stmts.addSceneRoleContent.run(sceneId, roleIds[roleName], text);
+        if (roleName === '_hiddenInfo' || !text || !text.trim() || !roleIds[roleName]) continue;
+        stmts.addSceneRoleContent.run(sceneId, roleIds[roleName], text);
+      }
+      if (roleContentMap._hiddenInfo) {
+        for (const h of roleContentMap._hiddenInfo) {
+          if (roleIds[h.role] && h.content && h.content.trim()) {
+            stmts.addHiddenInfo.run(sceneId, roleIds[h.role], h.tier, h.content);
+          }
         }
       }
     }
     return sceneId;
   });
 
-  // 第一幕 · 灯还亮着
-  insertSceneWithRoles(sessionId, 1,
-    '第一幕 · 灯还亮着',
-    '时间：晚上打烊后　地点：621号店内\n\n夜里九点多，621号店刚结束营业。最后一桌客人已经离开，门口「营业中」的木牌被翻到了背面。咖啡机停了，吧台后还留着一点热气，空气里有咖啡、木头和一点洗杯水的味道。几个人坐下来讨论店的去留。每个人都憋了很久，一开口就有点不对劲。\n\n[讲师引导] 请大家朗读剧本，留意这场讨论为什么一开始就不顺利。\n\n━━━ 对白 ━━━\n\n**周岚**（坐在桌边，手指轻轻压着桌上的本子）: 今天把大家叫回来，不是为了吵架。明天房东就要来问最后决定了，这家店到底怎么办，今晚总要有个说法。\n\n**林澈**（身体微微前倾）: 那我先说吧。现在最大的问题不是「要不要讨论」，而是我们已经讨论太久了。再拖下去，店就真的没了。\n\n**周岚**（眉头微皱）: 你每次一开口就是这种语气，好像别人都没做事一样。\n\n**林澈**（愣半拍）: 我不是这个意思。客流掉成这样，线上也没做起来，再不改就来不及了。\n\n**阿宁**（慢慢坐直一点）: 其实……我觉得问题也不只是改不改。很多事情平时根本没讲清楚。今天说改菜单，明天说先别动，到最后都是吧台那边临时接。\n\n**周岚**（语气里有一点被顶到的不舒服）: 阿宁，你有意见可以早点说，不用每次都等到现在。\n\n**阿宁**（苦笑）: 我早点说有用吗？很多次我说了，最后不还是「再看看」？\n\n**许言**（双手交握）: 你们先别急。我在旁边听着，感觉你们每个人都在说自己的，但没人真的接住别人说的。\n\n**林澈**: 因为现在根本不是慢慢聊的时候。再慢一点，这店可能连聊的机会都没有了。\n\n**周岚**: 那按你的意思，是不是只要改得够快，这店就一定能活？\n\n**林澈**: 至少比现在这样强吧。总比一直守着以前那一套强。\n\n**周岚**: 「以前那一套」？你说得倒轻巧。你知道这家店为什么会有人来吗？\n\n**阿宁**（轻轻摇头）: 你们看，又变成这样了。每次一谈就开始顶。\n\n**许言**: 我能不能插一句？我现在其实没太听明白，你们到底在争「要不要改」，还是在争「谁说了算」？\n\n**周岚**: 我不是要争谁说了算。我只是觉得，有些东西不能说改就改。\n\n**林澈**（苦笑）: 可问题是，你从来没说清楚什么能改，什么不能改。\n\n**阿宁**（轻轻点头）: 对，这个我也想说。很多时候我们根本不知道你真正怎么想。\n\n**周岚**（脸色明显冷下来）: 所以现在变成我一个人的问题了，是吗？\n\n**许言**（声音放慢）: 我觉得不是谁一个人的问题。是你们都很急，但谁都没先听完别人到底在急什么。', null);
-
-  // 第二幕 · 门快关了（含角色专属任务）
-  insertSceneWithRoles(sessionId, 2,
-    '第二幕 · 门快关了',
-    '第一轮讨论不欢而散。咖啡凉了，气氛却更紧了。\n\n每个人都说了话，但没人觉得被听进去。周岚收回了手，林澈语速越来越快，阿宁那句「我早点说有用吗」还悬在头顶，许言的问题没人回答。\n\n沉默之后，有人先开了口。这一次，他们不再争「要不要改」，而是开始说出那些一直卡在嗓子眼的、具体的事。\n\n门外的老街还在。但店里的灯，比刚才又暗了一档。\n\n[讲师引导] 这一轮要说出一件最让你疲惫的具体的事，以及它为什么让你越来越不想再默默接住一切。',
-    {
-      '阿宁': '【你的任务】\n\n最近最让你累的事：菜单调整、活动安排、排班变化，很多事情你常常都是最后才知道。等你知道的时候，已经来不及提意见，只能现场补。\n\n你需要说出的三件事：\n1. 一件总是让你疲惫的具体事情\n2. 这件事怎样影响你的工作状态\n3. 你最希望以后改掉的是什么\n\n你可以这样开口：\n「对我来说最累的，不是忙，而是很多安排都变得太临时。」\n「比如菜单、活动、排班一改，我经常是最后才知道，然后只能现场补。」\n「我不是不愿意配合，我只是希望以后不要再默认一定有人会把所有问题接住。」\n\n⚠ 容易说砸的话：「随便吧」「反正最后都得我来收拾」「我说了也没用」',
-      '周岚': '【你的任务】\n\n最近最让你不舒服的事：最近几次讨论方案，你常常还没把自己的顾虑讲完，大家就已经往「那到底改不改」推进了。你感觉自己不是在讨论，而是在被催着表态。\n\n你需要说出的三件事：\n1. 一件让你越来越抗拒讨论的具体事情\n2. 这件事让你产生了什么感觉或反应\n3. 你真正担心失去的是什么\n\n你可以这样开口：\n「最近几次聊方案，我常常还没说完，就已经被推进到要不要改这个结论上了。」\n「我真正担心的，不是改动本身，而是改到最后，这里只剩一个名字，已经不是原来的621了。」\n「如果一定要动，我希望先讲清楚，哪些东西我们无论如何都要保住。」\n\n⚠ 容易说砸的话：「你们根本不懂这家店」「反正我不同意」「你们就是想把这里变成别的地方」',
-      '林澈': '【你的任务】\n\n最近最让你着急的事：这两个月明明有几次活动或联动机会，但每次一到要拍板的时候，讨论都会停住，最后什么都没做成。\n\n你需要说出的三件事：\n1. 一件你认为已经不能再拖的具体事情\n2. 这件事为什么让你越来越着急\n3. 你真正怕的是什么\n\n你可以这样开口：\n「这两个月我们已经错过了好几次可以试的机会。」\n「每次都不是没有人提方案，而是一到关键处就停住，最后什么都没落下去。」\n「我不是想把以前的东西全推翻，我只是觉得我们得先活下来，才有资格谈留下什么。」\n\n⚠ 容易说砸的话：「你们太慢了」「再这样下去就等死」「讲这些有用吗？」',
-      '许言': '【你的任务】\n\n最近你最明显感受到的问题：你发现这家店里的人并不是没有想法，而是很多时候，想法、情绪和判断混在一起。结果每次都像谈了很多，但最后谁也不知道真正定下了什么。\n\n你需要说出的三件事：\n1. 你从旁观位置最明显看到的一个问题\n2. 这个问题为什么影响你是否愿意继续帮\n3. 你最希望他们先做好的是什么\n\n你可以这样开口：\n「我从外面看，最大的问题不是没人想办法，而是很多东西一直混在一起。」\n「有时候你们像是在谈方案，但很快又会变成立场、情绪和旧问题。」\n「我真正希望你们先做好的，不是活动，而是先把各自到底在坚持什么、担心什么讲明白。」\n\n⚠ 容易说砸的话：「你们先统一好了再找我」「这是你们内部问题」「算了，我大概知道了」'
-    });
-
-  // 第三幕 · 杯子还温着（含双版本）
-  insertSceneWithRoles(sessionId, 3,
-    '第三幕 · 杯子还温着',
-    '时间已经更晚了。前一轮讨论结束后，其他人暂时离开，只剩周岚和林澈留在店里。\n\n灯没有全开，只剩吧台和靠窗一侧还亮着。外面老街的声音比刚才更少，整家店像一下空下来。桌上的杯子还没收，空气里还悬着刚才那些没接住的话。\n\n就在这时，林澈收到消息：老街夜行活动那边还有一个位置，如果621号店要参加，今晚就必须回。\n\n这像是一个机会，也像是一根点着火药的引线。因为这不再是「以后再说」，而是一个当下就要表态的时刻。\n\n[讲师引导] 请两位学员上台，分别演绎「翻车版」与「修正版」对话。其他人观察：真正卡住决定的是什么？',
-    {
-      '周岚': '【翻车版】\n\n林澈（快步走近）: 刚收到消息，老街夜行活动那边还有一个位置。如果我们要上，今晚就得回。\n\n周岚（皱眉）: 今晚就定？你不觉得这也太赶了吗？\n\n[翻车版的核心问题：双方都进入了态度对抗，没有人解释自己的真实诉求，情绪越顶越高，最终不欢而散。]\n\n━━━\n\n【修正版】\n\n林澈（深呼吸，控制语速）: 我刚收到消息，老街夜行活动那边还有一个位置。如果我们想参加，今晚要先给答复。我想先把我的想法说清楚：我希望我们这次能参加，因为这是这段时间少有的一次机会。\n\n周岚（没有立刻反驳）: 你先继续说。你说的「参加」，具体是指今晚要定到什么程度？\n\n林澈（点头）: 今晚先确认要不要争取这个机会。如果确认参加，我明天中午前出一个简版方案，再一起看。\n\n周岚（神情稍松）: 好，这样我比较能听明白。我先说我的顾虑：我不是反对参加活动，我担心的是在准备还不清楚的时候先答应，到最后为了赶时间，把店做得很失真。\n\n林澈: 你说的「失真」，对你来说最重要的是哪一部分？\n\n周岚: 两个点。第一，不要为了活动把店原来的感觉全部打散。第二，不能再让执行压力最后都临时落到阿宁那里。\n\n林澈: 好，这两个点我记住。那我也说清楚我的担心：我最怕的不是这次做得不够完美，而是如果我们连这种机会都一直不试，店会在犹豫里慢慢失去更多可能。\n\n周岚: 我能理解你为什么急。这次如果要试，我希望边界先定出来。\n\n林澈: 可以。今晚先确认愿不愿意参加；如果愿意，我明天出方案；你来帮我一起划清哪些能动、哪些不能动。\n\n周岚: 我可以接受。但要补两条：方案出来之前不先对外承诺细节；阿宁要一起看执行表，不是最后通知她。\n\n林澈: 对外我只回复「有意参加，明天补具体方案」。执行表我和阿宁一起先列。如果明天你看完方案觉得触到底线，我们保留不上活动的决定权。\n\n周岚: 好，这样我能接受。\n\n林澈: 我也补一句：如果我后面又说得太像只想快点推，你直接提醒我。\n\n周岚: 那我也补一句：如果我只是说「不行」，没把担心说清楚，你也可以直接问我到底哪一条过不去。',
-      '林澈': '【翻车版】\n\n林澈（看着手机，快步走近桌边）: 刚收到消息，老街夜行活动那边还有一个位置。如果我们要上，今晚就得回。\n\n周岚（皱眉）: 今晚就定？你不觉得这也太赶了吗？\n\n林澈（把手机扣在桌上）: 问题是机会本来就不会等人。我们已经错过多少次了。\n\n[翻车版的核心问题：双方都进入了态度对抗，没有人解释自己的真实诉求，情绪越顶越高，最终不欢而散。]\n\n━━━\n\n【修正版】\n\n林澈（深呼吸，控制语速）: 我刚收到消息，老街夜行活动那边还有一个位置。如果我们想参加，今晚要先给答复。我想先把我的想法说清楚：我希望我们这次能参加，因为这是这段时间少有的一次机会。\n\n周岚: 你先继续说。你说的「参加」，具体是指今晚要定到什么程度？\n\n林澈（点头）: 不是今晚把所有细节都定完。今晚先确认要不要争取这个机会。如果确认参加，我明天中午前出一个简版方案。\n\n周岚: 好，这样我比较能听明白。我先说我的顾虑……\n\n（双方进入有效沟通，最终达成共识）\n\n林澈: 可以。那我现在请求：今晚先确认愿不愿意参加；如果愿意，我明天出方案；你来帮我一起划清哪些能动、哪些不能动。\n\n周岚: 我可以接受这样往下走。\n\n林澈: 我也补一句：如果我后面又说得太像只想快点推，你直接提醒我。我不想每次一着急，就把你推到对立面。',
-      '阿宁': '【作为观察者】\n\n你需要在周岚和林澈谈话结束后回到店里说说自己的想法。\n\n你不是站队，而是帮助把冲突拉回「可做决定」的层面。\n\n你可以提醒的点：\n• 你们到底在争「去不去」，还是在争「谁有资格决定」？\n• 如果都说自己是为了店好，那各自「好」的定义是什么？\n• 现在最缺的不是情绪，而是一个能落地的判断方式\n\n你可以这样开口：\n• 「我想先确认一下，你们现在争的是这次活动本身，还是在争以后谁说了算？」\n• 「如果周岚担心的是边界，林澈担心的是机会，那能不能先把这两个点拆开谈？」',
-      '许言': '【作为观察者】\n\n你需要在周岚和林澈谈话结束后回到店里说说自己的想法。\n\n你不是站队，而是帮助把冲突拉回「可做决定」的层面。\n\n你可以提醒的点：\n• 你们到底在争「去不去」，还是在争「谁有资格决定」？\n• 如果都说自己是为了店好，那各自「好」的定义是什么？\n• 现在最缺的不是情绪，而是一个能落地的判断方式\n\n你可以这样开口：\n• 「我想先确认一下，你们现在争的是这次活动本身，还是在争以后谁说了算？」\n• 「如果周岚担心的是边界，林澈担心的是机会，那能不能先把这两个点拆开谈？」'
-    });
-
-  // 第四幕 · 天快亮了
-  insertSceneWithRoles(sessionId, 4,
-    '第四幕 · 天快亮了',
-    '在最后的讨论里，大家逐渐意识到：621号店真正的问题，不只是经营，而是这些人已经很久没有把彼此真正想说的话说清楚了。\n\n━━━ 请完成以下四项 ━━━\n\n📌 1. 我们共同真正想守住的是什么？\n（可参考：店的温度 / 彼此的信任 / 一个可以继续尝试的机会 / 不再靠猜的合作方式 / 体面的告别方式）\n\n📌 2. 如果继续，我们新的三条沟通约定是什么？\n（例如：重要安排必须提前说清楚 / 每次讨论先复述再表达 / 有不同意见时先讲事实和影响 / 每周固定一次短复盘）\n\n📌 3. 最终决定是什么？\n• 继续经营\n• 小幅转型\n• 暂停整理\n• 体面告别\n\n📌 4. 留给621号店的一句话\n（例如：「留下来的不只是店，是我们终于开始好好说话。」「如果重新开始，我们先把话讲清，再把路走稳。」）\n\n━━━\n\n讲师备注：决策录入开放后，各组代表在手机端填写。讲师可在汇总页查看提交状态。全部提交后投屏，各组代表口头汇报。此幕建议时长：15分钟。',
-    {
-      '阿宁': '【你的任务】\n\n请认真参与小组讨论，完成以上四项内容。\n\n你可以说的：\n• 「我最想守住的是，以后大家能提前把事情说清楚，而不是每次到最后才让我知道。」\n• 「如果继续，我希望我们的约定里有一条：重要的事情要提前同步，不要再默认总有人兜底。」',
-      '周岚': '【你的任务】\n\n请认真参与小组讨论，完成以上四项内容。\n\n你可以说的：\n• 「我最想守住的是这家店原来的温度，但我也知道光守住不够，我们得找到一种不丢温度的方式往前走。」\n• 「如果继续，我希望能有一条约定：做任何调整之前，先说清楚哪些不能动。」',
-      '林澈': '【你的任务】\n\n请认真参与小组讨论，完成以上四项内容。\n\n你可以说的：\n• 「我最想守住的是我们还愿意为这家店去努力的那种状态。」\n• 「如果继续，我希望我们的约定包括：有想法就带着方案来，不要停在嘴上。」',
-      '许言': '【你的任务】\n\n请认真参与小组讨论，完成以上四项内容。\n\n你可以说的：\n• 「我最想守住的是这家店让人愿意坐下来好好说话的那种氛围。」\n• 「如果继续，我希望你们能有一条约定：每次讨论完，至少确定一件事可以落地。」'
-    });
-
+  insertScene(1, '第1环节：开场 · 角色认领', '【讲师开场】\n\n各位晚上好，欢迎来到喙语621号店。\n\n在正式开始之前，我想先问一个小问题——在你的心里，有没有一家你舍不得它关门的店？不用回答，心里想一下就行。\n\n今天晚上我们要一起走进一家开了十二年的小店。明天房东就要来问最后决定了——是续租、转型、还是关门。今晚，所有和这家店命运相关的人都被叫了回来。\n\n你们就是这些人。\n\n请看手机——你收到了你的角色信息。先弄清楚三件事：你是谁、你怎么看待这家店、今晚你最想争取什么。', 'discussion', '', '', null);
+  insertScene(2, '第2环节 · 第1幕：灯还亮着', '', 'script', '**周岚**（手指轻轻压着桌上的本子，语气尽量平稳，但能听出疲惫）：\n「人都到齐了吧。那我直说了——明天房东要来，要我们给一个最后答复。续租、转型、还是关门。今晚必须定下来。」\n（她停了停，目光扫过所有人）\n「我先表个态——我不是不让大家提想法，但这家店不是说改就改的。至少，我们得先想清楚，到底要守住什么。」\n\n**林澈**（身体微微前倾，语速偏快，像是已经等这句话很久了）：\n「那我先来。再拖下去店就真的没了。这两个月我们错过了至少两次机会——不是没人提方案，是一到关键处就卡住。」\n（他呼了一口气，压着火）\n「我不是来吵架的。但我觉得我们现在的问题不是缺想法，是已经拖不起了。」\n\n**阿宁**（原本靠在椅背上，这时慢慢坐直，语气带一点犹豫，但像忍了很久）：\n「……我插一句。你们说的改不改我不一定说得上话，但有一件事我想先说清楚——很多决定下来的时候，我是最后一个知道的。」\n（她语气不重，但话不绕）\n「上个月菜单要换，我当天下午四点半才收到通知。那天晚上我一个人在吧台加了三个小时班。这种事不是第一次了。」\n\n**许言**（双手交握放在桌上，先看一圈大家，语气尽量缓）：\n「我先不站队。我就说一个感觉——我刚才听下来，你们每个人说的都有道理，但你们好像不在说同一件事。」\n（他环视一圈）\n「林澈说的是机会，周岚说的是边界，阿宁说的是执行。你们自己有没有发现？」', '【你的第一轮任务】\n\n你心里对自己说：\n先别急着顶回去。先听他们说完。至少听出来两个人到底在担心什么——那种他们没直接说出来的担心。\n\n你可以这样开头：\n「你继续说，我听着。」\n\n注意——你要是说了这几句话，讨论会变糟：\n✕ 「你每次都是这种语气。」\n✕ 「那你觉得一定行吗？」', { '周岚': '（第1幕话头读完后进入自由讨论。你的任务是先听，不要急着反驳。）', '林澈': '（第1幕话头读完后进入自由讨论。拉一个人站到你这边。）', '阿宁': '（第1幕话头读完后进入自由讨论。让至少两个人对你的话有回应。）', '许言': '（第1幕话头读完后进入自由讨论。摸清至少两个人对这家店的预期。）', '_hiddenInfo': [{ role:'周岚', tier:1, content:'有件事一直在我心里没过去。\n\n两年前那次所谓的改动。饮品线、照明——我当时也是被推着答应的。前前后后折腾了快两个月，花了两万块。最后效果很一般。有几个老客人跟我说：「感觉店里不太一样了。」\n\n那之后我变得特别小心。因为我不想再来一次。但这件事我从没跟他们好好聊过。不是不想聊——是不知道怎么说。' },{ role:'林澈', tier:1, content:'有件事我一直没说。\n\n老街夜行是我托朋友拿到的。我跟他说「没问题，621肯定上」。如果今晚退掉——不只是一个机会没了。我朋友那边我没法交代。\n\n我没说出来，是因为说出来像是在逼大家。但不说的话——好像又没人知道我为什么这么急。' },{ role:'阿宁', tier:1, content:'有一本笔记本我一直没给人看过。\n\n过去一年，每一次临时变动、紧急通知——我都记在上面了。哪一天、什么事、谁通知的、我花了多久补。都是最直接的记录。\n\n我没拿出来，是因为拿出来像是在记账。但我心里清楚——如果我不拿出来，没人会真的知道执行端是什么情况。' },{ role:'许言', tier:1, content:'有件事我一直没跟他们说过。\n\n五年前我写过一篇关于这家店的深度报道。那篇发出去之后收到了很多留言——有人说就是在这里求婚的。\n\n从那以后我就一直在关注这个地方。今晚来——不只是来坐坐的。' },]});
+  insertScene(3, '第3环节：第一次讨论分享', '【讲师引导】\n\n组内讨论：\n\n• 你们觉得刚才谁是最想推动事情往前走的那个人？\n• 谁是最难被说服的？\n• 哪一句话让气氛明显变紧了？\n• 你们表面上在争什么？实际上在争什么？', 'discussion', '', '', null);
+  insertScene(4, '第4环节 · 第2幕：门快关了', '', 'script', '**周岚**（语气比刚才沉了一些，像是在边想边说）：\n「刚才说到那份上，我觉得有些话确实得说开一点。我不是反对所有变化，但你们得理解——有些事我经历过，你们没有。」\n（她停了一下）\n「我不是说我有多了不起。但有些东西，不是说换就能换好的。」\n\n**林澈**（声音低了一点，不是在认输，是在说实话）：\n「我承认我有时候是急。但你们知道吗——我每次停下来等，最后就什么都没发生。我等过很多次了。」\n（他看了一眼所有人）\n「我不是在怪谁。我只是不想今晚谈完，一切又回到原样。」\n\n**阿宁**（顿了一下才开口，像是想了很久才决定要说）：\n「其实……我刚才说换菜单的事，只是其中一个。类似的事每个月都有。我不是不愿意配合，但每次都是最后通知、临时补——」\n（她停下来，过了一会儿）\n「你们有没有想过，哪天我要是不补了呢？」\n\n**许言**（语气平缓，但目光认真）：\n「我听到现在有一个感觉越来越明显——你们每个人都有道理，但你们在用自己的道理压对方的道理。」\n「我不是要分谁对谁错。我就想问一句——你们有没有谁，主动去问过别人『你心里真正担心的是什么』？」', '【你的第二轮任务】\n\n你对自己说：\n今晚至少要说一件我从来没提过的事。用事实说，不要用判断。\n\n你可以这样开头：\n「有件事我没跟你们提过。」\n\n注意——这些话会让讨论变糟：\n✕ 「你们根本不懂这家店。」\n✕ 「反正我不同意。」', { '周岚': '（第2幕话头读完后进入自由讨论。说一件你从没提过的事。）', '林澈': '（第2幕话头读完后进入自由讨论。在反驳之前先重复对方的话。）', '阿宁': '（第2幕话头读完后进入自由讨论。拿出你的笔记本说具体数据。）', '许言': '（第2幕话头读完后进入自由讨论。让两个人直接回答对方的问题。）', '_hiddenInfo': [{ role:'周岚', tier:2, content:'有件事我一直没说。\n\n这半年，店一直在亏。每个月我都在拿自己的钱往里填。到现在垫了有六万多。我算过，大概还能撑三个月。\n\n不是不想告诉他们——是说出来就好像承认自己没经营好。' },{ role:'林澈', tier:2, content:'还有一个事我没跟任何人说过。\n\n上个月有人挖我。一家新品牌咖啡店，管理岗。薪资高不少，月底要答复。\n\n我不是犹豫去不去——我是怕我走了之后，这家店撑不住。' },{ role:'阿宁', tier:2, content:'还有一件事。\n\n上周有人来挖我了——另一家咖啡馆的店长岗，薪资高两成。我还没回复。\n\n如果今晚还是各说各的——那我可能真的不需要再等了。' },{ role:'许言', tier:2, content:'几个月前我认识了这栋楼的房东。他对这家店印象不错，但也提到了运营能力的担忧。\n\n他话里留了空间——如果团队有清晰的方向和稳定的共识，租金上他可以松动。\n\n但这话我没跟店里任何人提过。' },]});
+  insertScene(5, '第5环节：第二次讨论分享', '【讲师引导】\n\n组内讨论：\n\n• 哪个角色最像早就憋了很久的样子？\n• 哪些问题其实不是今天晚上才有的？\n• 如果只是方案问题，为什么每次都谈不下来？\n• 你觉得真正卡住决定的到底是什么？', 'discussion', '', '', null);
+  insertScene(6, '第6环节 · 第3幕（翻车版）：杯子还温着', '【场景说明】前一轮讨论结束后，其他人暂时离开。店里只剩周岚和林澈两个人。\n\n【讲师引导】需要一组周岚和林澈上台演绎。', 'script', '**林澈**（看着手机，快步走近，语速明显加快）：\n「刚收到消息。老街夜行活动那边还有一个位置。今晚就要回。」\n\n**周岚**（动作停住，慢慢抬头，皱眉）：\n「今晚就定？你不觉得太赶了吗？」\n\n**林澈**（把手机扣在桌上，压着急）：\n「机会不会等人。我们已经错过多少次了，你也知道。」\n\n**周岚**（站起一点又坐回去，像在压住情绪）：\n「我知道。但不是所有机会来了都得硬接。」\n\n**林澈**（往前一步，语气更重）：\n「问题不是接得完不完美——是我们再这样下去，连试都没得试。」\n\n**周岚**（冷笑一下，眼神里开始有防备）：\n「你每次都这样。一有事就说赶紧做，好像不答应就是在拖后腿。」\n\n**林澈**（一下被顶到，声音压低，但更冲）：\n「那你呢？每次都再看看、再想想——到头来不还是什么都没定下来？」', '', { '周岚': '【上台对戏版本】和林澈对戏。话头用完后自由发挥。任务：不说「不行」，说「什么情况下可以」。', '林澈': '【上台对戏版本】和周岚对戏。你先开口。任务：把为什么这么急的真实原因说出一件来。', '阿宁': '【观察任务】回答三个问题：1.他们有没有一次真的听懂了对方？2.哪一句换说法会不同？3.你会上台说什么？', '许言': '【观察任务】回答三个问题：1.他们争的是同一件事吗？2.谁的话里藏着真正怕的东西？3.你还有信心吗？', '_hiddenInfo': [{ role:'周岚', tier:3, content:'其实来之前我做了一个决定——如果今晚谈不拢，我就自己去找房东续约。哪怕只剩我一个人。\n\n但现在我有点不确定了。也许问题不是别人不努力——是我一直没把最真实的情况告诉他们。如果早点说，会不会不一样？' },{ role:'林澈', tier:3, content:'我也常常一急就不给人说话的机会。吵完之后我也会想：是不是又说过了。\n\n那句「再拖就没了」不光是说给他们听的，也是说给我自己的。' },{ role:'阿宁', tier:3, content:'说实话，我是真的在意这家店。要不是在意，我早走了。\n\n我今晚最想听到的，不是「改还是不改」。是有人认认真真问我一句：「你怎么想？」' },{ role:'许言', tier:3, content:'来之前我就有个预期——可能会看到和五年前差不多的场面。\n\n我给自己定了一条线：如果今晚到第三幕结束之前，没人主动去问别人「你真正担心的是什么」——那我手里的房东信息永远不会拿出来。' },]});
+  insertScene(7, '第7环节：观察分享 + 反转', '【讲师引导】\n\n1. 阿宁和许言分享观察发现。\n2. 全员讨论：他们表面上在争什么？实际上在争什么？\n3. 反转：讲师揭示身份——「我是十二年前投资这家店的人，从没露过面。」\n\n请所有人打开手机上还没解锁的信息。', 'discussion', '', '', null);
+  insertScene(8, '第8环节 · 第3幕（修正版）：杯子还温着', '【讲师引导】同样的事，同样的人。但如果他们把真正重要的东西说清楚——会走向完全不同的结局。需要另一组周岚和林澈上台演绎。', 'script', '**林澈**（深呼吸一下，语速仍快但明显在控制）：\n「我刚收到消息，老街夜行活动那边还有一个位置。我想先说清楚：我希望我们这次能参加，这是这段时间少有的一次机会。」\n\n**周岚**（没有立刻反驳，语气谨慎但平稳）：\n「你说的参加，具体是指今晚要定到什么程度？」\n\n**林澈**（点头）：\n「今晚先确认要不要争取这个机会。如果参加，我明天中午前出一个简版方案。」\n\n**周岚**（神情稍松）：\n「好。我先说我的顾虑——我担心在准备不清楚时先答应，最后赶时间把店做得很失真。」\n\n**林澈**（放慢语气）：\n「你说的失真，对你来说最重要的是哪一部分？」\n\n**周岚**（直接说）：\n「两点。第一，不能为了活动把店的感觉打散。第二，执行压力不能临时落到阿宁那里。」\n\n**林澈**（点头）：\n「好，我记住。我也说我的担心——我怕连这种机会都不试，店会在犹豫里慢慢失去更多可能。」\n\n**周岚**：\n「我理解你急。但如果要试，边界要先定出来。」\n\n**林澈**：\n「可以。今晚先确认是否参加；我明天出方案；你来帮我划清哪些能动、哪些不能动。」\n\n**周岚**：\n「我接受。但补两条：方案出来前不对外承诺细节；阿宁要一起看执行表。」\n\n**林澈**：\n「好。对外只回有意参加。执行表我和阿宁一起列。如果你看方案觉得触底线，保留不做的权利。」\n\n**周岚**：\n「好，这样我能接受。」\n\n**林澈**：\n「我也补一句：如果我后面又太急，你直接提醒我。」\n\n**周岚**：\n「那我也补：如果我只说不行没说清原因，你直接问我哪条过不去。」', '', { '周岚': '【修正版·上台】核心：把顾虑说清楚，而不是只说「不行」。注意动作标注。', '林澈': '【修正版·上台】核心：确认对方的底线，说出自己的担心。注意动作标注。', '阿宁': '【观察】对比翻车版和修正版，注意两个人分别做了哪些不同的事。', '许言': '【观察】修正版里哪些做法让对话从对抗变成了合作？', });
+  insertScene(9, '第9环节：知识分享', '【讲师分享三件事】\n\n一、听——他到底在说什么\n第一幕大家都在说但没人真的在听。以后开口前先问三个问题：他到底在说什么？他到底在担心什么？他到底想要什么？\n\n二、说——从「我觉得」到「事实是」\n第二幕阿宁的笔记本：她说的是事实，不是情绪。三句话：发生了什么？带来了什么？我担心什么？\n\n三、定——从「不行」到「什么情况下可以」\n修正版里周岚说了两点底线而不是说不行。把要求和底线放到桌面上，找两边都能走的路。', 'knowledge', '', '', null);
+  insertScene(10, '第10环节：最终决策', '回到最初的问题：621号店接下来怎么办？但这一次，你们手里有全部信息。\n\n请在组内完成四项：\n1. 你们共同真正想守住的是什么？\n2. 新的三条沟通约定是什么？\n3. 最终决定——继续 / 转型 / 暂停 / 告别\n4. 留给621号店的一句话', 'decision', '', '', null);
+  insertScene(11, '第11环节：收尾', '有些关系不是败在不在乎。是败在——太久没有把在乎说清楚。\n\n如果重新开始一次——你会先怎么说？\n\n谢谢大家。喙语621号店，今晚打烊了。', 'discussion', '', '', null);
   res.json({
     success: true,
     session: { code, id: sessionId, title },
-    message: '☕ 预设沙龙「喙语621号店」已创建！含完整剧本内容'
+    message: '预设沙龙已创建！含11环节完整内容'
   });
-});
-
-// ==================== Socket.IO ====================
+});// ==================== Socket.IO ====================
 const sessionClients = {}; // { sessionCode: { instructors: Set, participants: Map<socketId, data> } }
 
 io.on('connection', (socket) => {

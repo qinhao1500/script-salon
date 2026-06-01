@@ -215,7 +215,7 @@ socket.on('session_updated', (data) => {
   if(data.scenes){sessionData.scenes=data.scenes;renderScenes();renderSceneControls();}
   saveSession();
 });
-socket.on('participants_updated',(d)=>{sessionData.participants=d.participants;renderParticipants();renderSceneControls();saveSession();});
+socket.on('participants_updated',(d)=>{sessionData.participants=d.participants;renderParticipants();renderSceneControls();renderUnlockPanel();saveSession();});
 socket.on('scene:pushed',(d)=>{sessionData.session.current_scene=d.currentScene;renderSceneControls();saveSession();});
 socket.on('session:ended',()=>{toast('场次已结束','info');resetView();loadSessionList();});
 
@@ -238,8 +238,9 @@ async function deleteRole(rid){if(!confirm('确定删除？'))return;try{await f
 // ==================== 剧本管理 ====================
 async function addScene() {
   const t=document.getElementById('sceneTitle').value.trim();const c=document.getElementById('sceneContent').value.trim();
+  const rt=document.getElementById('sceneRoundType')?document.getElementById('sceneRoundType').value:'script';
   if(!t||!c){toast('请填写标题和内容','error');return;}
-  try{const r=await fetch('/api/session/'+sessionCode+'/scene',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,content:c})});const d=await r.json();if(d.success){document.getElementById('sceneTitle').value='';document.getElementById('sceneContent').value='';toast('已添加','success');}}catch(e){toast('添加失败','error')}
+  try{const r=await fetch('/api/session/'+sessionCode+'/scene',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,content:c,round_type:rt})});const d=await r.json();if(d.success){document.getElementById('sceneTitle').value='';document.getElementById('sceneContent').value='';toast('已添加','success');}}catch(e){toast('添加失败','error')}
 }
 async function deleteScene(sid){if(!confirm('确定删除？'))return;try{await fetch('/api/session/'+sessionCode+'/scene/'+sid,{method:'DELETE'});toast('已删除','info');}catch(e){}}
 async function moveScene(sid,dir){
@@ -269,6 +270,9 @@ function editScene(sid){
   const s=sessionData.scenes.find(x=>x.id===sid); if(!s)return;
   editingSceneId=sid;
   document.getElementById('editSceneTitle').value=s.title||'';
+  var rtSelect=document.getElementById('editRoundType');if(rtSelect)rtSelect.value=s.round_type||'script';
+  var fd=document.getElementById('editFullDialogue');if(fd)fd.value=s.full_dialogue||'';
+  var tc=document.getElementById('editTaskContent');if(tc)tc.value=s.task_content||'';
   document.getElementById('editSceneContent').value=s.content||'';
   let html='';
   (sessionData.groups||[]).forEach(g=>(g.roles||[]).forEach(r=>{
@@ -284,11 +288,14 @@ function closeEditScene(){document.getElementById('editSceneModal').style.displa
 async function saveEditScene(){
   if(!editingSceneId)return;
   const t=document.getElementById('editSceneTitle').value.trim();const c=document.getElementById('editSceneContent').value.trim();
+  const rt=document.getElementById('editRoundType')?document.getElementById('editRoundType').value:'script';
+  const fd=document.getElementById('editFullDialogue')?document.getElementById('editFullDialogue').value.trim():'';
+  const tc=document.getElementById('editTaskContent')?document.getElementById('editTaskContent').value.trim():'';
   if(!t||!c){toast('请填写完整','error');return;}
   const rc={};(sessionData.groups||[]).forEach(g=>(g.roles||[]).forEach(r=>{
     const ta=document.getElementById('editRoleContent_'+r.id);if(ta&&ta.value.trim())rc[r.id]=ta.value.trim();
   }));
-  try{const r=await fetch('/api/session/'+sessionCode+'/scene/'+editingSceneId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,content:c,roleContent:rc})});const d=await r.json();if(d.success){toast('已保存','success');closeEditScene();}}catch(e){toast('保存失败','error')}
+  try{const r=await fetch('/api/session/'+sessionCode+'/scene/'+editingSceneId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,content:c,round_type:rt,full_dialogue:fd,task_content:tc,roleContent:rc})});const d=await r.json();if(d.success){toast('已保存','success');closeEditScene();}}catch(e){toast('保存失败','error')}
 }
 
 // ==================== 设置 ====================
@@ -312,7 +319,7 @@ function resetView(){
 }
 
 // ==================== 渲染 ====================
-function renderAll(){renderGroups();renderRoles();renderScenes();renderParticipants();renderSceneControls();}
+function renderAll(){renderGroups();renderRoles();renderScenes();renderParticipants();renderSceneControls();renderUnlockPanel();}
 
 function renderGroups(){
   const gs=sessionData.groups||[];
@@ -341,7 +348,7 @@ function renderScenes(){
     const hasRole=s.role_content&&Object.keys(s.role_content).length>0;
     return `<div class="scene" style="animation:none;opacity:1">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div><div class="scene-number">第${s.scene_number}幕</div><div class="scene-title" style="font-size:16px">${escapeHtml(s.title)}</div></div>
+        <div><div class="scene-number">第${s.scene_number}幕</div><div class="scene-title" style="font-size:16px">${escapeHtml(s.title)}</div><span style="font-size:11px;color:var(--text-muted);position:absolute;top:4px;right:8px">${getRoundTypeLabel(s.round_type)}</span></div>
         <div class="scene-order-controls">
           <button class="scene-order-btn" onclick="moveScene(${s.id},'up')" ${i===0?'disabled style="opacity:0.3"':''}>↑</button>
           <button class="scene-order-btn" onclick="moveScene(${s.id},'down')" ${i===ss.length-1?'disabled style="opacity:0.3"':''}>↓</button>
@@ -380,6 +387,38 @@ function renderProgressBar(scenes, currentScene) {
   b.innerHTML = html;
 }
 
+function getRoundTypeLabel(t) { var m = {'script':'\uD83C\uDFAD','discussion':'\uD83D\uDCAC','knowledge':'\uD83D\uDCD6','decision':'\uD83D\uDCCB'}; return m[t] || '\uD83D\uDCC4'; }
+
+function renderUnlockPanel() {
+  var el = document.getElementById('emergencyUnlockList');
+  if (!el) return;
+  var ps = sessionData.participants || [];
+  if (!ps.length) { el.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">暂无学员</div>'; return; }
+  var html = '';
+  ps.forEach(function(p) {
+    html += '<button class="btn btn-ghost btn-sm" onclick="emergencyUnlock(' + p.role_id + ')" style="font-size:12px;border:1px solid var(--error);color:var(--error);border-radius:20px;padding:6px 12px;width:100%">\u26A1解禁 ' + escapeHtml(p.name) + '（' + escapeHtml(p.role_name) + '）</button>';
+  });
+  el.innerHTML = html;
+}
+
+async function unlockAll() {
+  if (!confirm('确定全组信息解禁？终局反转时使用。')) return;
+  try {
+    var r = await fetch('/api/session/' + sessionCode + '/unlock-all', { method:'POST' });
+    var d = await r.json();
+    if (d.success) { toast('全部信息已解禁！','success'); socket.emit('instructor:push_scene',{code:sessionCode,sceneNumber:sessionData.session.current_scene}); }
+  } catch(e) { toast('解禁失败','error'); }
+}
+
+async function emergencyUnlock(roleId) {
+  if (!confirm('紧急解锁该角色的所有隐藏信息？')) return;
+  try {
+    var r = await fetch('/api/session/' + sessionCode + '/emergency-unlock', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({roleId:roleId}) });
+    var d = await r.json();
+    if (d.success) toast('已紧急解锁','success');
+  } catch(e) { toast('解锁失败','error'); }
+}
+
 function renderSceneControls(){
   const c=document.getElementById('sceneControls');const e=document.getElementById('sceneControlsEmpty');
   const ss=sessionData.scenes;const cs=sessionData.session?sessionData.session.current_scene:0;
@@ -388,7 +427,7 @@ function renderSceneControls(){
   e.style.display='none';
   c.innerHTML=ss.map(s=>{
     const pushed=s.scene_number<=cs;const isCurrent=s.scene_number===cs;
-    let st='待推送',sc='';if(isCurrent){st='展示中';sc='current';}else if(pushed){st='已推送';sc='pushed';}
+    let st='待推送',sc='';var rtLabel=getRoundTypeLabel(s.round_type||'script');if(isCurrent){st='展示中';sc='current';}else if(pushed){st='已推送';sc='pushed';}
     return `<button class="scene-btn ${sc}" onclick="pushScene(${s.scene_number})" ${pushed?'disabled':''}>
       <div class="scene-btn-num">${s.scene_number}</div>
       <div class="scene-btn-info"><div class="scene-btn-title">${escapeHtml(s.title)}</div><div class="scene-btn-status">${st}</div></div>
