@@ -140,10 +140,54 @@ function saveSession() {
   }));
 }
 
+async function loadSessionList() {
+  try {
+    const r = await fetch('/api/sessions');
+    const d = await r.json();
+    if (!d.success) return;
+    const container = document.getElementById('sessionList');
+    const ss = d.sessions || [];
+    if (ss.length === 0) { container.innerHTML = '<div class="empty-state" style="padding:8px"><div class="text">暂无场次记录</div></div>'; return; }
+    container.innerHTML = ss.map(s => {
+      const isCurrent = s.code === sessionCode;
+      const statusMap = { 'preparing':'准备中','active':'进行中','ended':'已结束' };
+      return '<div class="list-item" style="'+(isCurrent?'border-color:var(--accent);background:rgba(245,166,35,0.04)':'')+'">'+
+        '<div class="list-item-label" style="flex-direction:column;align-items:flex-start;gap:2px">'+
+          '<span style="font-weight:600;font-size:14px">'+escapeHtml(s.title||'未命名')+'</span>'+
+          '<span style="font-size:11px;color:var(--text-muted)">码:'+s.code+' · '+(statusMap[s.status]||s.status)+' · 第'+s.current_scene+'幕</span>'+
+        '</div>'+
+        '<div style="display:flex;gap:4px">'+
+          (isCurrent?'<span class="badge badge-gold" style="font-size:11px">当前</span>':'<button class="btn btn-ghost btn-sm" onclick="switchToSession(\''+s.code+'\')" style="font-size:11px;color:var(--accent-dark)">切换</button>')+
+          '<button class="btn btn-ghost btn-sm" onclick="deleteSession(\''+s.code+'\')" style="font-size:11px;color:var(--error)">删除</button>'+
+        '</div></div>';
+    }).join('');
+  } catch(e) {}
+}
+
+async function switchToSession(code) {
+  if (!confirm('切换到场次 '+code+'？当前未保存的进度将丢失。')) return;
+  localStorage.setItem('instructor_session', JSON.stringify({ code, title: '' }));
+  location.reload();
+}
+
+async function deleteSession(code) {
+  if (!confirm('确定删除场次 '+code+'？')) return;
+  try {
+    await fetch('/api/session/'+code, { method: 'DELETE' });
+    if (sessionCode === code) {
+      localStorage.removeItem('instructor_session');
+      resetView();
+    }
+    loadSessionList();
+    toast('已删除','info');
+  } catch(e) { toast('删除失败','error'); }
+}
+
 function afterCreate(session) {
   sessionCode = session.code;
   sessionData.session = { code:sessionCode, id:session.id, title:session.title, current_scene:0 };
   saveSession();
+  loadSessionList();
   socket.emit('instructor:join', sessionCode);
   document.getElementById('codeBanner').style.display='block';
   document.getElementById('sessionCode').textContent=sessionCode;
@@ -172,7 +216,7 @@ socket.on('session_updated', (data) => {
 });
 socket.on('participants_updated',(d)=>{sessionData.participants=d.participants;renderParticipants();renderSceneControls();saveSession();});
 socket.on('scene:pushed',(d)=>{sessionData.session.current_scene=d.currentScene;renderSceneControls();saveSession();});
-socket.on('session:ended',()=>{toast('场次已结束','info');resetView();});
+socket.on('session:ended',()=>{toast('场次已结束','info');resetView();loadSessionList();});
 
 async function fetchFullData() {
   if(!sessionCode)return;

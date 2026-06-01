@@ -113,6 +113,20 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ==================== REST API ====================
 
+// 获取所有场次列表
+app.get('/api/sessions', (req, res) => {
+  const sessions = db.prepare('SELECT id, code, title, status, current_scene, created_at FROM sessions ORDER BY created_at DESC LIMIT 50').all();
+  res.json({ success: true, sessions });
+});
+
+// 删除场次
+app.delete('/api/session/:code', (req, res) => {
+  const session = stmts.getSessionByCode.get(req.params.code);
+  if (!session) return res.status(404).json({ success: false, message: '场次不存在' });
+  db.prepare('DELETE FROM sessions WHERE code = ?').run(req.params.code);
+  res.json({ success: true });
+});
+
 // 创建场次
 app.post('/api/session', (req, res) => {
   const { title } = req.body;
