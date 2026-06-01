@@ -1,6 +1,7 @@
 {
   "name": "script-salon",
-  "version": "1.0.0",
+  "version": "1.0.1",
+  "_note": "trigger redeploy",
   "description": "剧本杀沟通沙龙 - 剧本分发系统",
   "main": "server.js",
   "scripts": {
