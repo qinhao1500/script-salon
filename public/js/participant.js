@@ -23,10 +23,26 @@ async function joinSession() {
   try {
     const r = await fetch('/api/session/'+code+'/public');
     const d = await r.json();
-    if(!d.success){toast(d.message||'场次不存在','error');return;}
+    if(!d.success){
+      toast(d.message||'场次不存在','error');
+      // 场次已结束，清除本地记录
+      if (d.message && d.message.indexOf('已结束') > -1) {
+        localStorage.removeItem('salon_session');
+        localStorage.removeItem('salon_participant');
+      }
+      return;
+    }
     sessionCode = code; myName = name; sessionData = d;
     localStorage.setItem('salon_session',JSON.stringify({code,name}));
     socket.emit('participant:join', code);
+    // 检查是否有已保存的角色身份，有则自动恢复
+    var saved = JSON.parse(localStorage.getItem('salon_participant'));
+    if (saved && saved.code === code && saved.roleId) {
+      myGroup = { id: saved.groupId, name: saved.groupName };
+      myRole = { id: saved.roleId, name: saved.roleName };
+      enterScriptView();
+      return;
+    }
     showGroupSelection();
   } catch(e) { toast('连接失败','error'); }
 }
@@ -39,12 +55,15 @@ socket.on('participant:init', (d) => {
 socket.on('participant:role_selected', (d) => { myGroup=d.group; myRole=d.role; enterScriptView(); });
 socket.on('participant:error', (m) => { toast(m,'error'); });
 socket.on('scene:pushed', (d) => {
+  console.log('[socket] 收到scene:pushed', 'currentScene=' + d.currentScene, 'scenes=' + (d.scenes ? d.scenes.length : 0));
   try {
     sessionData.session.currentScene = d.currentScene;
+    sessionData.session.current_scene = d.currentScene;
     sessionData.session.pushedScenes = d.scenes;
     currentViewingScene = d.scenes.length - 1;
     renderScripts();
-  } catch(e) { console.error('scene:pushed error:', e); }
+    console.log('[socket] 渲染完成');
+  } catch(e) { console.error('[socket] scene:pushed error:', e); }
 });
 socket.on('all_unlocked', () => {
   unlockedTiers = {}; // 重置，重新加载时会全部显示已解锁
@@ -52,6 +71,12 @@ socket.on('all_unlocked', () => {
   toast('🔓 全部信息已解禁！','success');
 });
 socket.on('session:ended', () => { toast('场次已结束','info'); document.getElementById('statusText').textContent='已结束'; });
+
+// 编辑场景后刷新
+socket.on('scene_updated', function() {
+  if (!sessionCode || !myRole) return;
+  manualRefresh();
+});
 
 // ==================== 页面切换 ====================
 function showGroupSelection() {
@@ -68,12 +93,21 @@ function renderAllGroups() {
   const gs = sessionData.groups;
   if(!gs||!gs.length){grid.innerHTML='<div class="empty-state"><div class="icon">👥</div><div class="text">该场次暂未设置小组</div></div>';return;}
   let html = '';
-  gs.forEach(g => {
+  gs.forEach((g, gi) => {
     const roles = g.roles || [];
-    html += '<div style="margin-bottom:14px"><div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:6px;padding-left:4px">'+escapeHtml(g.name)+'</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
-    roles.forEach(r => {
+    html += '<div class="role-group-block" style="animation: cardRise 0.4s ease-out both; animation-delay:'+(gi*0.08)+'s">';
+    html += '<div class="role-group-title">'+escapeHtml(g.name)+'</div>';
+    html += '<div class="role-grid-2">';
+    roles.forEach((r, ri) => {
       const color = getRoleColor(r.name);
-      html += '<div class="role-card '+(r.occupied?'occupied':'')+'" onclick="selectRole('+g.id+','+r.id+')" style="animation:card-enter 0.3s ease-out both;animation-delay:'+(Math.random()*0.2)+'s"><div style="width:6px;height:6px;border-radius:50%;background:'+color+';margin:0 auto 6px"></div><div class="role-name" style="color:'+color+'">'+escapeHtml(r.name)+'</div><div class="role-status">'+(r.occupied?'已被选':'可选')+'</div></div>';
+      const occ = r.occupied;
+      const desc = (r.description || '').substring(0, 28);
+      html += '<div class="role-card-enhanced '+(occ?'occupied':'')+'" onclick="selectRole('+g.id+','+r.id+')" style="--role-color:'+color+'; animation: cardRise 0.35s ease-out both; animation-delay:'+(gi*0.08+ri*0.06)+'s">';
+      html += '<div class="rce-avatar" style="background: linear-gradient(135deg, '+color+', '+color+'88)"><span>'+r.name[0]+'</span></div>';
+      html += '<div class="rce-name" style="color:'+color+'">'+escapeHtml(r.name)+'</div>';
+      html += '<div class="rce-desc">'+(desc||(occ?'已被选择':'点击选择'))+'</div>';
+      html += '<div class="rce-status">'+(occ?'已被选':'可选')+'</div>';
+      html += '</div>';
     });
     html += '</div></div>';
   });
@@ -86,10 +120,27 @@ function selectRole(gid, rid) {
   const role = group.roles.find(r=>r.id===rid);
   if(!role||role.occupied) return;
   myGroup = group;
+  myRole = role;
+  // 保存身份到本地，刷新后可恢复
+  localStorage.setItem('salon_participant', JSON.stringify({
+    code: sessionCode,
+    name: myName,
+    roleId: role.id,
+    roleName: role.name,
+    groupId: group.id,
+    groupName: group.name
+  }));
   socket.emit('participant:select_role',{code:sessionCode,groupId:gid,roleId:rid,name:myName});
 }
 
 function enterScriptView() {
+  // 保存场次和角色身份到本地，支持断线重连
+  localStorage.setItem('salon_session', JSON.stringify({ code: sessionCode, name: myName }));
+  localStorage.setItem('salon_participant', JSON.stringify({
+    code: sessionCode, name: myName,
+    roleId: myRole.id, roleName: myRole.name,
+    groupId: myGroup.id, groupName: myGroup.name
+  }));
   ['stepCode','stepGroup','stepRole'].forEach(id=>document.getElementById(id).style.display='none');
   document.getElementById('stepScript').style.display='block';
   document.getElementById('statusText').textContent='剧本进行中';
@@ -123,30 +174,79 @@ function toggleTaskCard() {
 }
 
 // ==================== 场景导航 ====================
-function prevScene() { if(currentViewingScene>0){currentViewingScene--;renderCurrentScene();} }
+function prevScene() { if(currentViewingScene>0){currentViewingScene--;renderCurrentScene();renderProgressDots();} }
 function nextScene() {
   const ss=sessionData.session&&sessionData.session.pushedScenes;
-  if(ss&&currentViewingScene<ss.length-1){currentViewingScene++;renderCurrentScene();}
+  if(ss&&currentViewingScene<ss.length-1){currentViewingScene++;renderCurrentScene();renderProgressDots();}
 }
 
 // ==================== 自检解锁 ====================
 async function selfCheckUnlock(tier) {
-  if(!myRole||!sessionCode) return;
-  const scene = sessionData.session.pushedScenes[currentViewingScene];
-  if(!scene) return;
+  if (!sessionCode || !myRole) { toast('请先选择角色', 'info'); return; }
+  var ss = sessionData.session && sessionData.session.pushedScenes;
+  if (!ss || !ss.length) { toast('暂无剧本内容', 'info'); return; }
+  var scene = ss[currentViewingScene];
+  if (!scene) return;
+  var sceneNumber = scene.scene_number;
   try {
-    const r = await fetch('/api/session/'+sessionCode+'/unlock', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({roleId:myRole.id,sceneNumber:scene.scene_number,tier:tier})
+    var r = await fetch('/api/session/' + sessionCode + '/unlock', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ roleId: myRole.id, sceneNumber: sceneNumber, tier: tier })
     });
-    const d = await r.json();
-    if(d.success) {
-      unlockedTiers[scene.scene_number+'_'+tier] = true;
+    var d = await r.json();
+    if (d.success) {
+      unlockedTiers[sceneNumber + '_' + tier] = true;
+      toast('🔓 第'+tier+'层隐藏信息已解锁！', 'success');
       renderCurrentScene();
-      toast('🔓 第'+tier+'层信息已解锁！','success');
-    }
-  } catch(e) { toast('解锁失败','error'); }
+    } else { toast(d.message || '解锁失败', 'error'); }
+  } catch(e) { toast('解锁失败', 'error'); }
+}
+
+function xuYanChoice(choice) {
+  if (!sessionCode || !myRole || myRole.name !== '许言') return;
+  document.getElementById('xuYanChoiceArea').style.display = 'none';
+  fetch('/api/session/' + sessionCode + '/xu-yan', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ groupId: myGroup.id, choice: choice })
+  }).catch(function(){});
+  toast('已选择：' + (choice === 'public' ? '📢 公开' : '🔒 保留'), 'success');
+}
+
+// ==================== 进度条 ====================
+function renderProgressDots() {
+  var el = document.getElementById('progressDots');
+  if (!el) return;
+  var ss = sessionData.session && sessionData.session.pushedScenes;
+  var total = ss ? ss.length : 0;
+  if (total < 2) { el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  var html = '';
+  for (var i = 0; i < total; i++) {
+    var s = ss[i];
+    var cls = 'progress-dot';
+    if (i === currentViewingScene) cls += ' current';
+    else if (i < currentViewingScene) cls += ' visited';
+    else cls += ' future';
+    html += '<div class="' + cls + '" onclick="goToScene(' + i + ')">' + s.scene_number + '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function goToScene(idx) {
+  var ss = sessionData.session && sessionData.session.pushedScenes;
+  if (!ss || idx >= ss.length) return;
+  currentViewingScene = idx;
+  // 确保脚本区域可见，决策/结束区域隐藏
+  var sc = document.getElementById('scriptContent');
+  if (sc) sc.style.display = 'block';
+  document.getElementById('decisionFormArea').style.display = 'none';
+  document.getElementById('endingArea').style.display = 'none';
+  var card = document.getElementById('sceneCard');
+  if (card) card.style.display = 'block';
+  document.getElementById('sceneCounter').style.display = 'block';
+  document.getElementById('progressDots').style.display = 'flex';
+  renderCurrentScene();
+  renderProgressDots();
 }
 
 // ==================== 加载隐藏信息 ====================
@@ -167,28 +267,84 @@ function renderScripts() {
   const wr=document.getElementById('waitingRoom');const sc=document.getElementById('scriptContent');
   const badge=document.getElementById('sceneStatusBadge');
   const ss=sessionData.session&&sessionData.session.pushedScenes;
-  const cs=sessionData.session?sessionData.session.currentScene:0;
+  const cs=(sessionData.session?sessionData.session.currentScene:undefined)||(sessionData.session?sessionData.session.current_scene:undefined)||0;
 
-  if(ss&&ss.length>0){renderProgressBarClickable(ss, cs);}
+  if(ss&&ss.length>0){
+    // 进度条（后续可启用）
+  }
 
   if(!ss||!ss.length||cs===0){
-    wr.style.display='block';sc.style.display='none';badge.textContent='等待推送';badge.className='badge badge-gold';return;
+    wr.style.display='block';sc.style.display='none';badge.textContent='等待推送';badge.className='badge badge-gold';
+    document.getElementById('decisionFormArea').style.display='none';
+    document.getElementById('endingArea').style.display='none';
+    return;
   }
   wr.style.display='none';sc.style.display='block';
+  
+  // Check if last scene is decision or ending
+  var last = ss[ss.length-1];
+  if (last && last.round_type === 'decision') {
+    sc.style.display = 'none';
+    document.getElementById('decisionFormArea').style.display = 'block';
+    document.getElementById('endingArea').style.display = 'none';
+    badge.textContent='最终决策';badge.className='badge badge-green';
+    return;
+  }
   badge.textContent='第'+cs+'幕';badge.className='badge badge-green';
   renderCurrentScene();
+  renderProgressDots();
 }
 
 async function renderCurrentScene() {
+  try {
   const ss=sessionData.session&&sessionData.session.pushedScenes;
   if(!ss||!ss.length) return;
   const s=ss[currentViewingScene]; if(!s) return;
+  
+  // 确保基础元素可见
+  var card = document.getElementById('sceneCard');
+  if (!card) return;
+  card.style.display = 'block';
+  var counter = document.getElementById('sceneCounter');
+  if (counter) counter.style.display = 'block';
+  
+  // Handle decision scene
+  if (s.round_type === 'decision') {
+    card.style.display = 'none';
+    if (counter) counter.style.display = 'none';
+    var df = document.getElementById('decisionFormArea');
+    var ea = document.getElementById('endingArea');
+    var xy = document.getElementById('xuYanChoiceArea');
+    if (df) df.style.display = 'block';
+    if (ea) ea.style.display = 'none';
+    if (xy) xy.style.display = 'none';
+    return;
+  }
+  
+  // Handle ending (scene 11)
+  if (s.scene_number >= 11) {
+    card.style.display = 'none';
+    if (counter) counter.style.display = 'none';
+    var df2 = document.getElementById('decisionFormArea');
+    var ea2 = document.getElementById('endingArea');
+    var xy2 = document.getElementById('xuYanChoiceArea');
+    if (df2) df2.style.display = 'none';
+    if (ea2) ea2.style.display = 'block';
+    if (xy2) xy2.style.display = 'none';
+    return;
+  }
+  
+  var df3 = document.getElementById('decisionFormArea');
+  var ea3 = document.getElementById('endingArea');
+  if (df3) df3.style.display = 'none';
+  if (ea3) ea3.style.display = 'none';
   const total=ss.length;
   document.getElementById('sceneCounter').textContent='第 '+(currentViewingScene+1)+' 幕 / 共 '+total+' 幕';
   document.getElementById('prevSceneBtn').style.visibility=currentViewingScene>0?'visible':'hidden';
   document.getElementById('nextSceneBtn').style.visibility=currentViewingScene<total-1?'visible':'hidden';
 
   const roleClass=myRole?'role-'+getRoleClass(myRole.name):'role-default';
+  var myRoleColor = myRole ? getRoleColor(myRole.name) : '#F5A623';
 
   // 环节类型标识
   const roundType = s.round_type || 'script';
@@ -213,6 +369,9 @@ async function renderCurrentScene() {
         }
       }
       dialogueContent = dialogueContent.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      // 动作标注用灰色斜体区分
+      dialogueContent = dialogueContent.replace(/（[^）]+）/g, function(m) { return '<span class="inline-note">' + m + '</span>'; });
+      dialogueContent = dialogueContent.replace(/（([^）]*)）/g, function(m) { return '<span class="inline-note">' + m + '</span>'; });
     }
     fullDialogueHtml = '<div class="section-block"><div class="section-label">📜 完整对白</div><div class="scene-content" style="font-size:'+fontSize+'px;white-space:pre-wrap;line-height:2">'+dialogueContent+'</div></div>';
   } else {
@@ -233,25 +392,31 @@ async function renderCurrentScene() {
         }
       }
       displayContent = displayContent.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      // 动作标注用灰色斜体区分
+      displayContent = displayContent.replace(/（[^）]+）/g, function(m) { return '<span class="inline-note">' + m + '</span>'; });
     }
     fullDialogueHtml = '<div class="section-block"><div class="scene-content" style="font-size:'+fontSize+'px;white-space:pre-wrap;line-height:2">'+displayContent+'</div></div>';
   }
 
-  // 角色专属内容
-  let roleHtml = '';
+  // 角色专属内容（仅场景1显示为角色介绍）
+  var rt = '';
   if(s.role_content&&myRole){
-    const rt=s.role_content[myRole.id];
-    if(rt&&rt.trim()){
-      const roleColor=getRoleColor(myRole.name);
-      roleHtml='<div class="section-block role-script-block"><div class="section-label" style="color:'+roleColor+'">🎭 你的专属内容</div><div class="role-script-content" style="font-size:'+fontSize+'px;white-space:pre-wrap;line-height:1.9">'+escapeHtml(rt)+'</div></div>';
-    }
+    rt = s.role_content[myRole.id] || '';
+  }
+  var roleHtml = '';
+  if (rt && rt.trim() && s.scene_number === 1) {
+    roleHtml = '<div class="section-block" style="border-color:'+myRoleColor+'40;background:'+myRoleColor+'04"><div class="section-label" style="color:'+myRoleColor+'">🎭 你的角色</div><div class="role-script-content" style="font-size:'+fontSize+'px;white-space:pre-wrap;line-height:1.9">'+escapeHtml(rt)+'</div></div>';
   }
 
-  // 任务卡
+  // 任务卡 —— 场景1不显示，其他场景优先用角色专属内容
   let taskHtml = '';
-  const taskContent = s.task_content || '';
-  if(taskContent && taskContent.trim()) {
-    taskHtml = '<div class="section-block task-card" onclick="toggleTaskCard()"><div class="section-label" style="color:#D97736">📋 你的任务 <span style="font-size:12px;font-weight:normal;color:var(--text-muted)">（点击展开）</span></div><div id="taskCard" class="task-card-content" style="font-size:'+fontSize+'px;white-space:pre-wrap;line-height:1.9;display:none">'+escapeHtml(taskContent)+'</div></div>';
+  if (s.scene_number !== 1) {
+    var roleTask = rt && rt.trim();
+    var globalTask = s.task_content || '';
+    var taskText = roleTask || globalTask;
+    if(taskText && taskText.trim()) {
+      taskHtml = '<div class="section-block task-card" style="border-color:'+myRoleColor+'40;background:'+myRoleColor+'06" onclick="toggleTaskCard()"><div class="section-label" style="color:'+myRoleColor+'">📋 你的任务 <span style="font-size:12px;font-weight:normal;color:var(--text-muted)">（点击展开）</span></div><div id="taskCard" class="task-card-content" style="font-size:'+fontSize+'px;white-space:pre-wrap;line-height:1.9;display:none">'+escapeHtml(taskText)+'</div></div>';
+    }
   }
 
   // 字体控制
@@ -281,23 +446,24 @@ async function renderCurrentScene() {
     hiddenInfoHtml;
 
   card.querySelectorAll('.scene-content, .role-script-content, .hidden-info-content, .task-card-content').forEach(function(el){el.style.fontSize=fontSize+'px';});
+  } catch(e) { console.error('renderCurrentScene error:', e); }
 }
 
 async function renderHiddenInfo() {
   if(!myRole) return '';
   const hiddenInfo = await loadHiddenInfo();
   if(!hiddenInfo.length) return '';
-
   const tierLabels = { 1:'第一层', 2:'第二层', 3:'第三层' };
-  const tierIcons = { 1:'🔒', 2:'🔒', 3:'🔓' };
-  let html = '<div class="section-block hidden-info-section"><div class="section-label" style="color:#5A8AB5">🔐 隐藏信息</div>';
+  const roleColor=getRoleColor(myRole.name);
+  console.log('[颜色调试] renderHiddenInfo myRole:', myRole.name, 'roleColor:', roleColor);
+  let html = '<div class="section-block hidden-info-section" style="border-color:'+roleColor+'40;background:'+roleColor+'04"><div class="section-label" style="color:'+roleColor+'">🔐 隐藏信息</div>';
 
   for(const h of hiddenInfo) {
     const isUnlocked = h.unlocked === 1 || unlockedTiers[sessionData.session.pushedScenes[currentViewingScene].scene_number+'_'+h.tier];
     const tierLabel = tierLabels[h.tier] || '第'+h.tier+'层';
     const isFinalTier = h.tier === 3;
 
-    html += '<div class="hidden-info-item '+(isUnlocked?'unlocked':'locked')+'">';
+    html += '<div class="hidden-info-item '+(isUnlocked?'unlocked':'locked')+'" style="'+(isUnlocked?'border-color:'+roleColor+'60;background:'+roleColor+'0A':'')+'">';
     html += '<div class="hidden-info-header">';
     html += '<span class="hidden-info-tier">'+(isUnlocked?'🔓':'🔒')+' '+tierLabel+'</span>';
     if(!isUnlocked) {
@@ -305,7 +471,7 @@ async function renderHiddenInfo() {
     }
     html += '</div>';
     if(isUnlocked) {
-      html += '<div class="hidden-info-content animate-unlock" style="font-size:'+fontSize+'px;white-space:pre-wrap;line-height:1.9">'+escapeHtml(h.content)+'</div>';
+      html += '<div class="hidden-info-content" style="font-size:'+fontSize+'px;white-space:pre-wrap;line-height:1.9;border-left-color:'+roleColor+'">'+escapeHtml(h.content)+'</div>';
     } else if(isFinalTier) {
       html += '<div class="hidden-info-placeholder">⏳ 讲师宣布解禁后方可查看</div>';
     } else {
@@ -332,29 +498,97 @@ function startScenePolling() {
   scenePollTimer = setInterval(async function() {
     if (!sessionCode || !myRole) return;
     try {
-      var r = await fetch('/api/session/' + sessionCode + '/public');
+      console.log('[轮询] 开始拉取...');
+      var r = await fetch('/api/session/' + sessionCode + '/diag');
       var d = await r.json();
-      if (!d.success || !d.session) return;
+      if (!d.success || !d.session) { console.log('[轮询] 拉取失败'); return; }
       var cs = d.session.current_scene || 0;
-      var currentKnown = sessionData.session ? sessionData.session.currentScene : 0;
-      if (cs > 0 && cs !== currentKnown) {
-        var r2 = await fetch('/api/session/' + sessionCode + '/full');
-        var d2 = await r2.json();
-        if (d2.success) {
-          sessionData.session = d2.session;
-          sessionData.session.pushedScenes = d2.scenes.filter(function(s) { return s.scene_number <= cs; });
-          currentViewingScene = sessionData.session.pushedScenes.length - 1;
-          renderScripts();
-          toast('新内容已推送','info');
-        }
+      console.log('[轮询] current_scene=' + cs + ' 参与者=' + d.participantCount);
+      if (cs === 0) return;
+      var oldCs = sessionData._lastScene || 0;
+      if (cs === oldCs) return;
+      console.log('[轮询] 检测到变化: ' + oldCs + ' -> ' + cs + '，拉取完整数据');
+      sessionData._lastScene = cs;
+      var r2 = await fetch('/api/session/' + sessionCode + '/full');
+      var d2 = await r2.json();
+      if (d2.success) {
+        sessionData.session = d2.session;
+        sessionData.session.currentScene = d2.session.current_scene;
+        sessionData.session.pushedScenes = d2.scenes.filter(function(s) { return s.scene_number <= cs; });
+        currentViewingScene = sessionData.session.pushedScenes.length - 1;
+        console.log('[轮询] 渲染, pushedScenes=' + sessionData.session.pushedScenes.length);
+        renderScripts();
       }
-    } catch(e) {}
-  }, 4000);
+    } catch(e) { console.log('[轮询] 异常:', e.message); }
+  }, 2000);
 }
 
 function stopScenePolling() {
   if (scenePollTimer) { clearInterval(scenePollTimer); scenePollTimer = null; }
 }
 
-// 恢复上次连接
-(function(){try{const s=JSON.parse(localStorage.getItem('salon_session'));if(s&&s.code&&s.name){document.getElementById('codeInput').value=s.code;document.getElementById('nameInput').value=s.name;}}catch(e){}})();
+// ==================== 手动刷新 ====================
+async function manualRefresh() {
+  if (!sessionCode || !myRole) { toast('请先选择角色','error'); return; }
+  try {
+    var r = await fetch('/api/session/' + sessionCode + '/full');
+    var d = await r.json();
+    if (!d.success) { toast('刷新失败','error'); return; }
+    var cs = d.session.current_scene || 0;
+    if (cs === 0) { toast('暂无新内容','info'); return; }
+    sessionData.session = d.session;
+    sessionData.session.currentScene = d.session.current_scene;
+    sessionData.session.pushedScenes = d.scenes.filter(function(s) { return s.scene_number <= cs; });
+    currentViewingScene = sessionData.session.pushedScenes.length - 1;
+    renderScripts();
+    toast('已刷新','success');
+  } catch(e) { toast('刷新失败','error'); }
+}
+
+// ==================== 页面加载：检查是否有之前的场次 ====================
+(function checkPreviousSession() {
+  try {
+    var sess = JSON.parse(localStorage.getItem('salon_session'));
+    var part = JSON.parse(localStorage.getItem('salon_participant'));
+    if (!sess || !sess.code || !sess.name) return;
+    if (!part || !part.code || !part.roleName) return;
+    if (!window.confirm('检测到你之前加入了场次 ' + sess.code + '（角色：' + part.roleName + '）\n\n是否回到之前的进度？')) {
+      localStorage.removeItem('salon_session');
+      localStorage.removeItem('salon_participant');
+      return;
+    }
+    document.getElementById('codeInput').value = sess.code;
+    document.getElementById('nameInput').value = sess.name;
+    joinSession();
+  } catch(e) {}
+})();
+
+// ==================== 决策提交 ====================
+async function submitDecision() {
+  var keep = document.getElementById('dfKeep').value.trim();
+  var r1 = document.getElementById('dfRule1').value.trim();
+  var r2 = document.getElementById('dfRule2').value.trim();
+  var r3 = document.getElementById('dfRule3').value.trim();
+  var choice = document.getElementById('dfChoice').value;
+  var words = document.getElementById('dfWords').value.trim();
+  if (!keep || !r1 || !words) { toast('请至少填写守住什么、第一条约定和一句话', 'info'); return; }
+  try {
+    var r = await fetch('/api/session/' + sessionCode + '/decision', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ groupId: myGroup.id, roleName: myRole.name, keep: keep, rules: [r1,r2,r3], choice: choice, words: words })
+    });
+    var d = await r.json();
+    if (d.success) {
+      document.getElementById('decisionFormArea').innerHTML = '<div class="card" style="text-align:center;padding:30px"><div style="font-size:40px;margin-bottom:12px">✅</div><div style="font-size:16px;color:var(--success);font-weight:600">决策已提交</div><div style="font-size:14px;color:var(--text-muted);margin-top:8px">等待其他组完成</div></div>';
+      toast('决策已提交！', 'success');
+    }
+  } catch(e) { toast('提交失败', 'error'); }
+}
+
+// Socket: 场次结束，显示收尾
+socket.on('session:ended', () => {
+  document.getElementById('scriptContent').style.display = 'none';
+  document.getElementById('decisionFormArea').style.display = 'none';
+  document.getElementById('endingArea').style.display = 'block';
+  document.getElementById('endingDecision').textContent = '你们的决定，你们自己认同。';
+});

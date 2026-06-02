@@ -76,14 +76,48 @@
       <div class="icon">☕</div>
       <div class="title">等待讲师推送</div>
       <div class="desc">讲师稍后逐幕推送剧本<br>请耐心等候</div>
+      <button class="btn btn-secondary btn-sm" onclick="manualRefresh()" style="margin-top:16px;font-size:13px;padding:8px 20px">🔄 手动刷新</button>
     </div>
 
-    <!-- 剧情阅读区（单页卡片+导航） -->
+    <!-- 最终决策表单 -->
+    <div id="decisionFormArea" style="display:none">
+      <div class="card" style="margin-bottom:12px">
+        <div style="font-family:var(--font-serif); font-size:18px; font-weight:700; margin-bottom:16px">📋 最终决策</div>
+        <div style="font-size:13px; color:var(--text-muted); margin-bottom:14px">在全部信息透明的情况下，做出你们自己认同的决定</div>
+        <div class="input-group"><label class="input-label">❶ 你们共同真正想守住的是什么？</label><textarea class="input" id="dfKeep" rows="2" placeholder="写下你们共同的决定..."></textarea></div>
+        <div class="input-group"><label class="input-label">❷ 如果继续，新的三条沟通约定</label><input class="input" id="dfRule1" placeholder="第一条：例如 重大改动至少提前一天发执行表"><input class="input" id="dfRule2" placeholder="第二条" style="margin-top:6px"><input class="input" id="dfRule3" placeholder="第三条" style="margin-top:6px"></div>
+        <div class="input-group"><label class="input-label">❸ 最终决定</label><select class="input" id="dfChoice" style="appearance:auto"><option value="continue">继续经营</option><option value="transform">小幅转型</option><option value="pause">暂停整理</option><option value="goodbye">体面告别</option></select></div>
+        <div class="input-group"><label class="input-label">❹ 留给621号店的一句话</label><input class="input" id="dfWords" placeholder="写下一句话..." maxlength="50"></div>
+        <button class="btn btn-primary" onclick="submitDecision()" style="width:100%;margin:8px 0 0 0">确认提交</button>
+      </div>
+    </div>
+    <!-- 结束页 -->
+    <div id="endingArea" style="display:none; text-align:center; padding:40px 20px">
+      <div style="font-size:60px; margin-bottom:16px">☕</div>
+      <div style="font-family:var(--font-serif); font-size:26px; color:var(--text-primary); margin-bottom:8px">621号店</div>
+      <div style="font-size:14px; color:var(--text-muted); margin-bottom:24px">今晚打烊了</div>
+      <div style="font-size:16px; color:var(--accent); font-style:italic; max-width:300px; margin:0 auto; line-height:1.8" id="endingMessage">有些关系不是败在不在乎。<br>是败在——太久没有把在乎说清楚。</div>
+      <div style="margin-top:32px; font-size:13px; color:var(--text-muted)" id="endingDecision"></div>
+    </div>
     <div id="scriptContent" style="display:none">
+      <!-- 许言选择区 -->
+      <div id="xuYanChoiceArea" style="display:none; margin-bottom:12px">
+        <div class="card" style="border:1px dashed var(--color-xu); background:rgba(90,138,181,0.04); text-align:center; padding:14px">
+          <div style="font-size:14px; color:var(--text-primary); margin-bottom:4px">📋 你手里有一条关键信息</div>
+          <div style="font-size:13px; color:var(--text-muted); margin-bottom:10px">现在要公开吗？</div>
+          <div style="display:flex; gap:10px; justify-content:center">
+            <button class="btn btn-primary btn-sm" onclick="xuYanChoice('public')" style="background:var(--color-xu); border-color:var(--color-xu)">📢 公开</button>
+            <button class="btn btn-secondary btn-sm" onclick="xuYanChoice('keep')">🔒 保留</button>
+          </div>
+        </div>
+      </div>
       <div class="scene-counter" id="sceneCounter"></div>
+      <!-- 进度条 -->
+      <div id="progressDots" class="progress-dots"></div>
       <div id="sceneCard" class="scene"></div>
       <div class="scene-nav">
         <button class="btn btn-secondary" id="prevSceneBtn" onclick="prevScene()">← 上一幕</button>
+        <button class="btn btn-secondary" onclick="manualRefresh()" style="font-size:12px;padding:8px 12px">🔄</button>
         <button class="btn btn-primary" id="nextSceneBtn" onclick="nextScene()">下一幕 →</button>
       </div>
     </div>
@@ -92,6 +126,6 @@
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="/js/socket-client.js"></script>
-<script src="/js/participant.js"></script>
+<script src="/js/participant.js?v=20260601"></script>
 </body>
 </html>

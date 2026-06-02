@@ -119,6 +119,12 @@
     <div id="sceneControls" class="scene-controls"></div>
     <div id="sceneControlsEmpty" class="empty-state"><div class="icon">📝</div><div class="text">请先在剧本中添加内容</div></div>
     <button class="btn btn-danger" onclick="endSession()" style="width:100%;margin:16px 0">结束场次</button>
+    
+    <!-- 决策汇总 -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><div class="card-title">📋 决策汇总</div><button class="btn btn-ghost btn-sm" onclick="loadDecisions()">刷新</button></div>
+      <div id="decisionSummary" style="font-size:14px; color:var(--text-muted)">点击刷新查看各组决策</div>
+    </div>
   </div>
 
   <!-- ===== Tab 4: 设置 ===== -->

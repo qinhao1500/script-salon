@@ -26,6 +26,7 @@ function getRoleColor(n) { return ROLE_COLORS[n]||'#9A8A7A'; }
     if (input === pwd) {
       sessionStorage.setItem('lecturer_verified', 'true');
       div.remove();
+      loadSessionList();
     } else {
       toast('密码错误', 'error');
     }
@@ -254,14 +255,18 @@ async function insertAfter(sid){
 
 // ==================== 推送控制 ====================
 async function pushScene(n){
+  console.log('[讲师] pushScene 被调用, scene=' + n);
   if(!confirm('确定推送第'+n+'幕？'))return;
   try {
+    console.log('[讲师] 发起HTTP推送请求...');
     var r = await fetch('/api/session/'+sessionCode+'/push-scene',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sceneNumber:n})});
     var d = await r.json();
-    if(d.success) toast('第'+n+'幕已推送','success');
+    console.log('[讲师] HTTP推送响应:', JSON.stringify(d));
+    if(d.success) { toast('第'+n+'幕已推送','success'); console.log('[讲师] 推送成功'); }
     else toast('推送失败:'+(d.message||'未知错误'),'error');
   } catch(e) {
-    // 兜底：走socket
+    console.log('[讲师] HTTP推送失败:', e.message);
+    console.log('[讲师] 走socket备用通道');
     socket.emit('instructor:push_scene',{code:sessionCode,sceneNumber:n});
     toast('第'+n+'幕已推送(备用通道)','success');
   }
@@ -307,7 +312,7 @@ async function saveEditScene(){
   const rc={};(sessionData.groups||[]).forEach(g=>(g.roles||[]).forEach(r=>{
     const ta=document.getElementById('editRoleContent_'+r.id);if(ta&&ta.value.trim())rc[r.id]=ta.value.trim();
   }));
-  try{const r=await fetch('/api/session/'+sessionCode+'/scene/'+editingSceneId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,content:c,round_type:rt,full_dialogue:fd,task_content:tc,roleContent:rc})});const d=await r.json();if(d.success){toast('已保存','success');closeEditScene();}}catch(e){toast('保存失败','error')}
+  try{const r=await fetch('/api/session/'+sessionCode+'/scene/'+editingSceneId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t,content:c,round_type:rt,full_dialogue:fd,task_content:tc,roleContent:rc})});const d=await r.json();if(d.success){toast('已保存','success');closeEditScene();const fr=await fetch('/api/session/'+sessionCode+'/full');const fd2=await fr.json();if(fd2.success){sessionData.scenes=fd2.scenes||[];renderScenes();}}}catch(e){toast('保存失败','error')}
 }
 
 // ==================== 设置 ====================
@@ -429,6 +434,29 @@ async function emergencyUnlock(roleId) {
     var d = await r.json();
     if (d.success) toast('已紧急解锁','success');
   } catch(e) { toast('解锁失败','error'); }
+}
+
+async function loadDecisions() {
+  if (!sessionCode) return;
+  try {
+    var r = await fetch('/api/session/' + sessionCode + '/decisions');
+    var d = await r.json();
+    if (!d.success) return;
+    var el = document.getElementById('decisionSummary');
+    if (!d.decisions || d.decisions.length === 0) { el.innerHTML = '<div style="color:var(--text-muted)">暂无决策提交</div>'; return; }
+    var html = '';
+    d.decisions.forEach(function(dc, i) {
+      var groups = sessionData.groups || [];
+      var g = groups.find(function(x) { return x.id === dc.group_id; });
+      var gn = g ? g.name : '组' + (i+1);
+      html += '<div style="padding:8px 0;border-bottom:1px solid var(--divider)">';
+      html += '<div style="font-weight:600;color:var(--text-primary)">' + escapeHtml(gn) + ' · ' + escapeHtml(dc.role_name||'') + '</div>';
+      html += '<div style="font-size:13px;color:var(--accent);margin:4px 0">决定：' + (dc.choice==='continue'?'继续经营':dc.choice==='transform'?'小幅转型':dc.choice==='pause'?'暂停整理':'体面告别') + '</div>';
+      html += '<div style="font-size:13px;color:var(--text-secondary);font-style:italic">"' + escapeHtml(dc.words||'') + '"</div>';
+      html += '</div>';
+    });
+    el.innerHTML = html;
+  } catch(e) {}
 }
 
 function renderSceneControls(){

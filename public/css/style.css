@@ -476,6 +476,72 @@ textarea.input {
   color: var(--text-muted);
 }
 
+/* ==================== 增强版角色卡片 ==================== */
+.role-group-block {
+  margin-bottom: 16px;
+}
+.role-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  padding-left: 4px;
+  letter-spacing: 0.5px;
+}
+.role-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.role-card-enhanced {
+  background: var(--card-bg);
+  border-radius: var(--radius-sm);
+  padding: 16px 10px 12px;
+  text-align: center;
+  border: 1.5px solid var(--divider);
+  box-shadow: var(--card-shadow);
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  opacity: 0;
+  animation: cardRise 0.4s ease-out forwards;
+}
+.role-card-enhanced:active { transform: scale(0.95); }
+.role-card-enhanced:hover { border-color: var(--role-color, var(--accent)); box-shadow: 0 4px 16px rgba(245,166,35,0.12); }
+.role-card-enhanced.occupied { opacity: 0.3; cursor: not-allowed; pointer-events: none; animation: none; }
+.rce-avatar {
+  width: 42px; height: 42px; border-radius: 50%;
+  margin: 0 auto 10px;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 19px; font-weight: bold;
+  font-family: var(--font-serif);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.rce-name {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.rce-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  word-break: break-all;
+}
+.rce-status {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: rgba(0,0,0,0.03);
+  display: inline-block;
+}
+
 /* ==================== 角色颜色标签 ==================== */
 .role-tag {
   display: inline-flex;
@@ -602,6 +668,11 @@ textarea.input {
 .card:nth-child(2) { animation-delay: 0.05s; }
 .card:nth-child(3) { animation-delay: 0.1s; }
 .card:nth-child(4) { animation-delay: 0.15s; }
+
+@keyframes cardRise {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
 /* 列表项入场 */
 .list-item {
@@ -1072,6 +1143,12 @@ textarea.input {
 }
 .modal-box .input { text-align: center; font-size: 22px; letter-spacing: 8px; font-weight: 700; }
 
+.progress-dots { display: flex; justify-content: center; gap: 8px; margin: 10px 0 14px; flex-wrap: wrap; }
+.progress-dot { width: 22px; height: 22px; border-radius: 50%; background: var(--divider); cursor: pointer; transition: all 0.2s ease; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; font-weight: 600; }
+.progress-dot.visited { background: #7BAE7A; }
+.progress-dot.current { background: var(--accent); transform: scale(1.15); box-shadow: 0 0 6px rgba(245,166,35,0.4); }
+.progress-dot.future { background: var(--divider); cursor: default; }
+
 /* ==================== 场景导航(上/下一幕) ==================== */
 .scene-nav {
   display: flex;
@@ -1112,8 +1189,10 @@ textarea.input {
   margin: 14px 0;
   padding: 14px 16px;
   border-radius: var(--radius-sm);
-  background: #FAF6EE;
-  border: 1px solid var(--divider);
+  background: var(--card-bg);
+  border: 1.5px solid var(--divider);
+  box-shadow: var(--card-shadow);
+}
 }
 .section-label {
   font-size: 12px;
@@ -1125,8 +1204,6 @@ textarea.input {
 
 /* ==================== 隐藏信息区块 ==================== */
 .hidden-info-section {
-  background: rgba(90,138,181,0.04);
-  border-color: rgba(90,138,181,0.2);
   margin-top: 16px;
 }
 .hidden-info-item {
@@ -1138,8 +1215,6 @@ textarea.input {
   transition: all 0.3s ease;
 }
 .hidden-info-item.unlocked {
-  border-color: rgba(90,138,181,0.3);
-  background: rgba(90,138,181,0.06);
 }
 .hidden-info-header {
   display: flex;
@@ -1153,15 +1228,11 @@ textarea.input {
   color: var(--text-secondary);
 }
 .hidden-info-content {
-  margin-top: 10px;
-  padding: 10px 12px;
-  background: var(--card-bg);
-  border-radius: var(--radius-xs);
+  margin-top: 6px;
   font-size: 15px;
   line-height: 1.9;
   color: var(--text-primary);
   white-space: pre-wrap;
-  border-left: 3px solid #5A8AB5;
 }
 .hidden-info-placeholder {
   margin-top: 8px;
@@ -1181,20 +1252,14 @@ textarea.input {
 
 /* ==================== 任务卡 ==================== */
 .task-card {
-  background: rgba(217,119,54,0.04);
-  border-color: rgba(217,119,54,0.2);
   cursor: pointer;
 }
 .task-card-content {
-  margin-top: 8px;
-  padding: 10px 12px;
-  background: var(--card-bg);
-  border-radius: var(--radius-xs);
+  margin-top: 6px;
   font-size: 15px;
   line-height: 1.9;
   color: var(--text-primary);
   white-space: pre-wrap;
-  border-left: 3px solid #D97736;
 }
 
 /* ==================== 角色颜色高亮 ==================== */
@@ -1202,6 +1267,33 @@ textarea.input {
 .role-highlight-lin { background: rgba(232,146,58,0.12); padding: 0 4px; border-radius: 3px; }
 .role-highlight-a { background: rgba(58,158,122,0.12); padding: 0 4px; border-radius: 3px; }
 .role-highlight-xu { background: rgba(90,138,181,0.12); padding: 0 4px; border-radius: 3px; }
+
+/* 动作标注样式 */
+.inline-note {
+  color: #8A7A6A;
+  font-style: italic;
+  font-weight: normal;
+  font-size: 13px;
+  background: rgba(138,122,106,0.08);
+  padding: 1px 5px;
+  border-radius: 3px;
+  display: inline;
+}
+
+/* ==================== 新版角色卡片 ==================== */
+.role-card-new {
+  background: var(--card-bg);
+  border: 1.5px solid var(--divider);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  box-shadow: var(--card-shadow);
+  min-height: 56px;
+}
+.role-card-new:active { transform: scale(0.95); }
+.role-card-new.occupied { opacity: 0.4; pointer-events: none; }
+.role-card-new:hover { border-color: var(--accent); box-shadow: 0 2px 12px rgba(245,166,35,0.12); }
 
 /* ==================== 场景排序控制 ==================== */
 .scene-order-controls {
